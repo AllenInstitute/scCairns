@@ -1,0 +1,20 @@
+{
+    "remote.autoForwardPortsSource": "hybrid",
+    "workbench.colorTheme": "Visual Studio Dark",
+    "git.useIntegratedAskPass": false,
+    "editor.rulers": [
+        
+        80
+
+    ],
+    "basedpyright.analysis.exclude": [
+        "results/**",
+        "data/**",
+        "scratch/**"
+    ],
+    "basedpyright.analysis.inlayHints.functionReturnTypes": false,
+    "basedpyright.analysis.inlayHints.variableTypes": false,
+    "basedpyright.analysis.inlayHints.callArgumentNames": false,
+    "basedpyright.analysis.typeCheckingMode": "off",
+    "basedpyright.analysis.useLibraryCodeForTypes": false
+}
