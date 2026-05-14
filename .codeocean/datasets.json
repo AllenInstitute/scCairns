@@ -1,0 +1,9 @@
+{
+	"version": 1,
+	"attached_datasets": [
+		{
+			"id": "f5177709-4645-48a0-821e-eb4de3eccc33",
+			"mount": "sns_all_int_260513"
+		}
+	]
+}
