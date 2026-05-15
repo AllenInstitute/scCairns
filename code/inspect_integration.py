@@ -60,6 +60,44 @@ import seaborn as sns
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Model key extraction
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def extract_keys_from_model(model_dir):
+    """Read batch_key and covariate_keys from a saved scVI model directory.
+
+    Looks for attr_dict.json (scvi-tools model save format) and pulls
+    setup_args.  Returns a dict with keys batch_key,
+    categorical_covariate_keys, continuous_covariate_keys, or None if the
+    file is absent or unparseable.
+    """
+    model_dir = Path(model_dir)
+    attr_path = model_dir / "attr_dict.json"
+    if not attr_path.exists():
+        return None
+    try:
+        with open(attr_path) as f:
+            attr = json.load(f)
+    except Exception:
+        return None
+
+    setup_args = attr.get("registry_", {}).get("setup_args", {})
+    result = {}
+
+    bk = setup_args.get("batch_key")
+    if bk:
+        result["batch_key"] = bk
+
+    cat = setup_args.get("categorical_covariate_keys") or []
+    result["categorical_covariate_keys"] = cat if isinstance(cat, list) else [cat]
+
+    cont = setup_args.get("continuous_covariate_keys") or []
+    result["continuous_covariate_keys"] = cont if isinstance(cont, list) else [cont]
+
+    return result
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  Default marker genes (peripheral / sympathetic neurons)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -83,12 +121,13 @@ DEFAULT_MARKERS = {
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
-                        latent_key=None):
+                        latent_key=None, covariate_keys=None):
     """Compute per-cluster QC statistics.
 
     Returns a DataFrame with one row per cluster, columns:
         n_cells, median_genes, median_counts, median_pct_mt,
         n_batches, dominant_batch, dominant_batch_frac,
+        dominant_{cov}_frac  (for each key in covariate_keys),
         silhouette (if latent_key provided)
     """
     obs = adata.obs.copy()
@@ -110,11 +149,16 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
             if col in sub.columns:
                 row[label] = float(sub[col].median())
 
-        if batch_key in sub.columns:
+        if batch_key and batch_key in sub.columns:
             vc = sub[batch_key].value_counts()
             row["n_batches"] = int((vc > 0).sum())
             row["dominant_batch"] = vc.index[0]
             row["dominant_batch_frac"] = float(vc.iloc[0] / n)
+
+        for cov_key in (covariate_keys or []):
+            if cov_key in sub.columns:
+                vc = sub[cov_key].value_counts()
+                row[f"dominant_{cov_key}_frac"] = float(vc.iloc[0] / n)
 
         rows.append(row)
 
@@ -139,7 +183,7 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
 
 def auto_flag_clusters(summary_df, mt_threshold=15.0, min_genes_threshold=400,
                         min_cells=20, single_batch_threshold=0.90,
-                        silhouette_threshold=-0.05):
+                        silhouette_threshold=-0.05, covariate_keys=None):
     """Flag clusters that meet common removal criteria.
 
     Returns a dict: {cluster_id: [reason1, reason2, ...]}
@@ -171,6 +215,13 @@ def auto_flag_clusters(summary_df, mt_threshold=15.0, min_genes_threshold=400,
                 f"{row['dominant_batch_frac']:.0%} "
                 f"> {single_batch_threshold:.0%})")
 
+        for cov_key in (covariate_keys or []):
+            col = f"dominant_{cov_key}_frac"
+            if col in row and row[col] > single_batch_threshold:
+                reasons.append(
+                    f"Single-covariate dominated ({cov_key}: "
+                    f"{row[col]:.0%} > {single_batch_threshold:.0%})")
+
         if ("silhouette" in row
                 and row["silhouette"] < silhouette_threshold):
             reasons.append(
@@ -196,6 +247,21 @@ def _fig_to_base64(fig):
     return base64.b64encode(buf.read()).decode("utf-8")
 
 
+def _fmt_annot(value, col_name):
+    """Format a heatmap annotation value with column-appropriate precision."""
+    if pd.isna(value):
+        return ""
+    if col_name in ("n_cells", "n_batches"):
+        return str(int(value))
+    if col_name in ("median_genes", "median_counts"):
+        return f"{int(value):,}"
+    if col_name == "silhouette":
+        return f"{value:.3f}"
+    if col_name.endswith("_frac"):
+        return f"{value:.2f}"
+    return f"{value:.1f}"
+
+
 def plot_qc_summary_heatmap(summary_df, flags, output_dir):
     """Heatmap of per-cluster QC metrics with flagged clusters highlighted."""
     cols = [c for c in ["n_cells", "median_genes", "median_counts",
@@ -214,11 +280,17 @@ def plot_qc_summary_heatmap(summary_df, flags, output_dir):
         else:
             norm_df[c] = 0.5
 
+    # Build per-column annotation strings to avoid overflow from large values
+    annot = np.empty((len(plot_df), len(cols)), dtype=object)
+    for j, col in enumerate(cols):
+        for i in range(len(plot_df)):
+            annot[i, j] = _fmt_annot(plot_df.iloc[i, j], col)
+
     n_clusters = len(plot_df)
     fig_h = max(4, n_clusters * 0.35 + 1)
     fig, ax = plt.subplots(figsize=(10, fig_h))
 
-    sns.heatmap(norm_df, annot=plot_df.round(1).values, fmt="",
+    sns.heatmap(norm_df, annot=annot, fmt="",
                 cmap="YlOrRd", linewidths=0.5, ax=ax,
                 cbar_kws={"label": "Normalised (row-wise)", "shrink": 0.6})
 
@@ -239,9 +311,10 @@ def plot_qc_summary_heatmap(summary_df, flags, output_dir):
     return b64
 
 
-def plot_batch_composition(adata, cluster_key, batch_key, output_dir):
-    """Stacked bar chart: batch composition per cluster."""
-    ct = pd.crosstab(adata.obs[cluster_key], adata.obs[batch_key],
+def _plot_key_composition(adata, cluster_key, groupby_key, output_dir,
+                           output_fname, title_label=None):
+    """Stacked bar chart: composition of groupby_key per cluster."""
+    ct = pd.crosstab(adata.obs[cluster_key], adata.obs[groupby_key],
                      normalize="index")
     clusters = sorted(ct.index, key=lambda x: int(x) if x.isdigit() else x)
     ct = ct.loc[clusters]
@@ -251,15 +324,38 @@ def plot_batch_composition(adata, cluster_key, batch_key, output_dir):
             linewidth=0.3)
     ax.set_ylabel("Fraction of cells")
     ax.set_xlabel("Cluster")
-    ax.set_title(f"Batch composition per cluster (batch_key={batch_key})")
-    ax.legend(title=batch_key, bbox_to_anchor=(1.02, 1), loc="upper left",
+    label = title_label or groupby_key
+    ax.set_title(f"{label} composition per cluster ({groupby_key})")
+    ax.legend(title=groupby_key, bbox_to_anchor=(1.02, 1), loc="upper left",
               fontsize=7)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=0, fontsize=8)
     fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, "batch_composition.png"),
+    fig.savefig(os.path.join(output_dir, output_fname),
                 dpi=150, bbox_inches="tight")
     b64 = _fig_to_base64(fig)
     return b64
+
+
+def plot_batch_composition(adata, cluster_key, batch_key, output_dir):
+    """Stacked bar chart: batch composition per cluster."""
+    return _plot_key_composition(
+        adata, cluster_key, batch_key, output_dir,
+        "batch_composition.png", title_label="Batch")
+
+
+def plot_covariate_compositions(adata, cluster_key, covariate_keys, output_dir):
+    """One stacked bar chart per covariate key.  Returns {key: b64} dict."""
+    results = {}
+    for key in covariate_keys:
+        if key not in adata.obs.columns:
+            print(f"  [WARN] Covariate key '{key}' not in obs — skipping.")
+            continue
+        fname = f"covariate_{key}_composition.png"
+        b64 = _plot_key_composition(
+            adata, cluster_key, key, output_dir, fname,
+            title_label=f"Covariate ({key})")
+        results[key] = b64
+    return results
 
 
 def plot_marker_dotplot(adata, cluster_key, marker_dict, output_dir):
@@ -337,10 +433,14 @@ def plot_umap_overview(adata, cluster_key, batch_key, output_dir,
                     size=8, frameon=False)
     axes[0].set_title(f"Clusters ({cluster_key})")
 
-    sc.pl.embedding(adata, basis=umap_key, color=batch_key, ax=axes[1],
-                    legend_loc="right margin", legend_fontsize=7, show=False,
-                    size=8, frameon=False)
-    axes[1].set_title(f"Batch ({batch_key})")
+    if batch_key and batch_key in adata.obs.columns:
+        sc.pl.embedding(adata, basis=umap_key, color=batch_key, ax=axes[1],
+                        legend_loc="right margin", legend_fontsize=7,
+                        show=False, size=8, frameon=False)
+        axes[1].set_title(f"Batch ({batch_key})")
+    else:
+        axes[1].axis("off")
+        axes[1].set_title(f"Batch key '{batch_key}' not in obs")
 
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "umap_overview.png"),
@@ -446,7 +546,7 @@ def load_decisions(path):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def generate_html_report(summary_df, flags, images, adata, output_path,
-                          cluster_key, batch_key):
+                          cluster_key, batch_key, covariate_keys=None):
     """Generate a self-contained HTML inspection report."""
     n_flagged = len(flags)
     n_flagged_cells = 0
@@ -476,6 +576,29 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
             <img src="data:image/png;base64,{b64}"
                  style="max-width:100%; border:1px solid #ddd; border-radius:4px;">
             """
+
+    # Extra stat boxes for each covariate key
+    cov_stats_html = ""
+    for cov_key in (covariate_keys or []):
+        if cov_key in adata.obs.columns:
+            n_vals = adata.obs[cov_key].nunique()
+            cov_stats_html += f"""
+  <div class="stat">
+    <div class="stat-value">{n_vals}</div>
+    <div class="stat-label">Covariate values ({cov_key})</div>
+  </div>"""
+
+    cov_footer = ""
+    if covariate_keys:
+        cov_footer = f" &middot; Covariate keys: {', '.join(covariate_keys)}"
+
+    batch_stat = ""
+    if batch_key and batch_key in adata.obs.columns:
+        batch_stat = f"""
+  <div class="stat">
+    <div class="stat-value">{adata.obs[batch_key].nunique()}</div>
+    <div class="stat-label">Batches ({batch_key})</div>
+  </div>"""
 
     html = f"""<!DOCTYPE html>
 <html>
@@ -522,10 +645,8 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
     <div class="stat-value">{len(summary_df)}</div>
     <div class="stat-label">Clusters</div>
   </div>
-  <div class="stat">
-    <div class="stat-value">{adata.obs[batch_key].nunique()}</div>
-    <div class="stat-label">Batches ({batch_key})</div>
-  </div>
+  {batch_stat}
+  {cov_stats_html}
 </div>
 
 {"<div class='flag-warn'>" +
@@ -546,9 +667,9 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
 <hr>
 <p style="font-size:12px; color:#999;">
   Cluster key: {cluster_key} &middot;
-  Batch key: {batch_key} &middot;
+  Batch key: {batch_key or "none"} &middot;
   Cells: {adata.n_obs:,} &middot;
-  Genes: {adata.n_vars:,}
+  Genes: {adata.n_vars:,}{cov_footer}
 </p>
 </body>
 </html>"""
@@ -721,12 +842,21 @@ Typical iterative cycle:
     parser.add_argument("--output-dir", default=".",
                         help="Output directory (default: current dir).")
 
-    # ── Cluster / batch keys ──
+    # ── Cluster / batch / covariate keys ──
     parser.add_argument("--cluster-key", default=None,
                         help="Obs column for clusters (default: auto-detect "
                              "'leiden' or first 'leiden_*').")
-    parser.add_argument("--batch-key", default="data_origin",
-                        help="Obs column for batch (default: data_origin).")
+    parser.add_argument("--batch-key", default=None,
+                        help="Obs column for batch (default: auto-detect from "
+                             "model or 'data_origin').")
+    parser.add_argument("--covariate-keys", nargs="*", default=None,
+                        help="Additional obs columns treated as covariates "
+                             "(default: auto-detect from model).")
+    parser.add_argument("--model-dir", default=None,
+                        help="scVI model directory containing attr_dict.json. "
+                             "Used to auto-detect batch_key and covariate_keys. "
+                             "Auto-searched as scvi_model_* near the input "
+                             "h5ad if omitted.")
     parser.add_argument("--latent-key", default=None,
                         help="Obsm key for latent space, used for silhouette "
                              "(default: auto-detect 'X_scVI' or first "
@@ -769,7 +899,40 @@ Typical iterative cycle:
     adata = ad.read_h5ad(args.input)
     print(f"  {adata.n_obs:,} cells x {adata.n_vars:,} genes")
 
-    # Auto-detect keys
+    # ── Resolve batch_key / covariate_keys from model or CLI ──
+    model_info = None
+    if args.model_dir:
+        model_info = extract_keys_from_model(args.model_dir)
+        if model_info is None:
+            print(f"  [WARN] Could not read attr_dict.json from {args.model_dir}")
+        else:
+            print(f"  Read model config from {args.model_dir}")
+    else:
+        for search_dir in [Path(args.input).parent, Path(args.output_dir)]:
+            for candidate in sorted(search_dir.glob("scvi_model_*")):
+                info = extract_keys_from_model(candidate)
+                if info:
+                    model_info = info
+                    print(f"  Auto-detected model: {candidate}")
+                    break
+            if model_info:
+                break
+
+    if args.batch_key is None:
+        if model_info and model_info.get("batch_key"):
+            args.batch_key = model_info["batch_key"]
+            print(f"  Batch key from model: {args.batch_key}")
+        else:
+            args.batch_key = "data_origin"
+
+    if args.covariate_keys is None:
+        cat_covs = (model_info or {}).get("categorical_covariate_keys", [])
+        args.covariate_keys = [k for k in cat_covs
+                                if k and k != args.batch_key]
+    if args.covariate_keys:
+        print(f"  Covariate keys: {args.covariate_keys}")
+
+    # ── Auto-detect cluster key ──
     cluster_key = args.cluster_key
     if cluster_key is None:
         for candidate in ["leiden"] + [c for c in adata.obs.columns
@@ -822,7 +985,7 @@ Typical iterative cycle:
         print("  Computing cluster QC summary...")
         summary = cluster_qc_summary(
             adata, cluster_key=cluster_key, batch_key=args.batch_key,
-            latent_key=latent_key)
+            latent_key=latent_key, covariate_keys=args.covariate_keys)
         summary.to_csv(os.path.join(args.output_dir,
                                      "cluster_qc_summary.csv"))
         print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
@@ -842,6 +1005,7 @@ Typical iterative cycle:
             min_genes_threshold=args.min_genes_threshold,
             min_cells=args.min_cells,
             single_batch_threshold=args.single_batch_threshold,
+            covariate_keys=args.covariate_keys,
         )
 
         if flags:
@@ -869,8 +1033,17 @@ Typical iterative cycle:
         images["QC Summary Heatmap"] = plot_qc_summary_heatmap(
             summary, flags, args.output_dir)
 
-        images["Batch Composition"] = plot_batch_composition(
-            adata, cluster_key, args.batch_key, args.output_dir)
+        if args.batch_key and args.batch_key in adata.obs.columns:
+            images["Batch Composition"] = plot_batch_composition(
+                adata, cluster_key, args.batch_key, args.output_dir)
+
+        if args.covariate_keys:
+            print(f"  Generating covariate composition plots "
+                  f"({args.covariate_keys})...")
+            cov_plots = plot_covariate_compositions(
+                adata, cluster_key, args.covariate_keys, args.output_dir)
+            for key, b64 in cov_plots.items():
+                images[f"Covariate Composition ({key})"] = b64
 
         # Markers
         if args.markers:
@@ -889,7 +1062,8 @@ Typical iterative cycle:
         generate_html_report(
             summary, flags, images, adata,
             os.path.join(args.output_dir, "inspection_report.html"),
-            cluster_key, args.batch_key)
+            cluster_key, args.batch_key,
+            covariate_keys=args.covariate_keys)
         print("  Saved inspection_report.html")
 
     # ══════════════════════════════════════════════════════════════════════
