@@ -16,6 +16,12 @@ Modes
       --decisions rounds/round_01/decisions.yaml \
       --output-dir rounds/round_02/
 
+  # decisions.yaml supports four actions (applied in order):
+  #   keep_clusters  — whitelist: only these cluster IDs are retained
+  #   keep_cells     — query whitelist: each query further restricts (AND)
+  #   remove_clusters — blacklist: drop these clusters from the retained set
+  #   remove_cells   — query blacklist: drop matching cells from the retained set
+
   # 3. Both at once (report on the current state, then filter)
   python inspect_integration.py --input integrated.h5ad \
       --decisions rounds/round_01/decisions.yaml \
@@ -460,9 +466,11 @@ def write_auto_flags_yaml(flags, summary_df, output_path, thresholds):
         "# Auto-generated cluster flags — edit this file to create your",
         "# decisions.yaml for the next integration round.",
         "#",
-        "# Actions:",
-        "#   remove_clusters:  list of cluster IDs to drop entirely",
-        "#   remove_cells:     list of pandas query strings for finer removal",
+        "# Actions (applied in this order):",
+        "#   keep_clusters:    only retain these cluster IDs (all others excluded)",
+        "#   keep_cells:       restrict to cells matching each query (AND-chained)",
+        "#   remove_clusters:  drop these cluster IDs from the retained set",
+        "#   remove_cells:     drop cells matching each query from the retained set",
         "#   notes:            free-text notes for provenance",
         "#",
         "# To accept the auto-flags as-is, rename this file to decisions.yaml",
@@ -493,6 +501,16 @@ def write_auto_flags_yaml(flags, summary_df, output_path, thresholds):
         lines.append("")
 
     lines.extend([
+        "# Uncomment to keep only specific clusters (all others excluded):",
+        "# keep_clusters:",
+        "#   - cluster: \"1\"",
+        "#     reason: \"Confirmed high-quality neurons\"",
+        "",
+        "# Uncomment to restrict to cells matching a query (AND-chained):",
+        "# keep_cells:",
+        "#   - query: \"n_genes_by_counts > 500\"",
+        "#     reason: \"Minimum gene complexity\"",
+        "",
         "# Uncomment and edit to remove specific cells by query:",
         "# remove_cells:",
         "#   - query: \"(tech == 'scale') & (neuron_type.isin(['GABAergic']))\"",
@@ -517,26 +535,38 @@ def load_decisions(path):
         with open(path) as f:
             text = f.read()
 
-        decisions = {"remove_clusters": [], "remove_cells": []}
+        decisions = {
+            "keep_clusters": [], "keep_cells": [],
+            "remove_clusters": [], "remove_cells": [],
+        }
 
-        # Parse remove_clusters
-        cluster_pattern = re.compile(
-            r'- cluster:\s*["\']?(\w+)["\']?')
-        for m in cluster_pattern.finditer(text):
-            decisions["remove_clusters"].append({"cluster": m.group(1)})
+        # Track which section each cluster/query belongs to by scanning
+        # section headers and collecting entries that follow them.
+        section_re = re.compile(
+            r'^(keep_clusters|keep_cells|remove_clusters|remove_cells)\s*:',
+            re.MULTILINE)
+        cluster_re = re.compile(r'-\s+cluster:\s*["\']?(\w+)["\']?')
+        query_re   = re.compile(r'-\s+query:\s*["\'](.+?)["\']')
+        reason_re  = re.compile(r'reason:\s*["\'](.+?)["\']')
 
-        # Parse remove_cells
-        query_pattern = re.compile(
-            r'- query:\s*["\'](.+?)["\']')
-        reason_after_query = re.compile(
-            r'reason:\s*["\'](.+?)["\']')
-        for m in query_pattern.finditer(text):
-            q = m.group(1)
-            # Look for reason on next line
-            rest = text[m.end():]
-            r_match = reason_after_query.search(rest[:200])
-            reason = r_match.group(1) if r_match else ""
-            decisions["remove_cells"].append({"query": q, "reason": reason})
+        # Split text into labelled sections
+        sections = []
+        for m in section_re.finditer(text):
+            sections.append((m.group(1), m.end()))
+        sections.append((None, len(text)))  # sentinel
+
+        for i, (section, start) in enumerate(sections[:-1]):
+            chunk = text[start:sections[i + 1][1]]
+            if section in ("keep_clusters", "remove_clusters"):
+                for cm in cluster_re.finditer(chunk):
+                    decisions[section].append({"cluster": cm.group(1)})
+            elif section in ("keep_cells", "remove_cells"):
+                for qm in query_re.finditer(chunk):
+                    q = qm.group(1)
+                    rest = chunk[qm.end():]
+                    rm = reason_re.search(rest[:200])
+                    reason = rm.group(1) if rm else ""
+                    decisions[section].append({"query": q, "reason": reason})
 
         return decisions
 
@@ -685,21 +715,65 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
 def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
     """Apply a decisions dict to filter an AnnData.
 
+    Order of operations:
+      1. keep_clusters  — restrict to listed cluster IDs
+      2. keep_cells     — restrict to cells matching each query (AND-chained)
+      3. remove_clusters — drop cluster IDs from the retained set
+      4. remove_cells   — drop cells matching each query from the retained set
+
     Writes:
       - cells_to_keep.csv
       - filtered.h5ad
       - decisions_applied.yaml
-      - round_manifest.json (appended/created)
+      - round_manifest.json
     """
     n_before = adata.n_obs
     keep = pd.Series(True, index=adata.obs_names)
     log_entries = []
 
-    # Remove clusters
+    # ── Keep clusters (restrict to listed IDs) ──────────────────────────────
+    keep_cluster_ids = [str(e["cluster"])
+                        for e in decisions.get("keep_clusters", [])]
+    if keep_cluster_ids:
+        mask = adata.obs[cluster_key].astype(str).isin(keep_cluster_ids)
+        n_excluded = int((~mask & keep).sum())
+        keep &= mask
+        reasons = "; ".join(
+            e.get("reason", "") for e in decisions["keep_clusters"]
+            if e.get("reason"))
+        log_entries.append({
+            "type": "keep_clusters",
+            "clusters": keep_cluster_ids,
+            "n_excluded": n_excluded,
+            "reason": reasons or "keep listed clusters only",
+        })
+        print(f"  Keep clusters {keep_cluster_ids}: "
+              f"{n_excluded:,} cells outside excluded")
+
+    # ── Keep cells (restrict by query, AND-chained) ──────────────────────────
+    for entry in decisions.get("keep_cells", []):
+        query = entry["query"]
+        reason = entry.get("reason", "")
+        try:
+            query_mask = adata.obs.eval(query)
+            n_excluded = int((~query_mask & keep).sum())
+            keep &= query_mask
+            log_entries.append({
+                "type": "keep_query",
+                "query": query,
+                "n_excluded": n_excluded,
+                "reason": reason,
+            })
+            print(f"  Keep query '{query}': "
+                  f"{n_excluded:,} cells excluded ({reason})")
+        except Exception as e:
+            print(f"  [WARN] Keep query failed: {query} — {e}")
+
+    # ── Remove clusters ──────────────────────────────────────────────────────
     for entry in decisions.get("remove_clusters", []):
         cl = str(entry["cluster"])
         mask = adata.obs[cluster_key].astype(str) == cl
-        n_removed = int(mask.sum())
+        n_removed = int((mask & keep).sum())
         keep[mask] = False
         reasons = entry.get("reasons", entry.get("reason", "unspecified"))
         if isinstance(reasons, list):
@@ -710,9 +784,9 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
             "n_removed": n_removed,
             "reasons": reasons,
         })
-        print(f"  Removing cluster {cl}: {n_removed:,} cells ({reasons})")
+        print(f"  Remove cluster {cl}: {n_removed:,} cells ({reasons})")
 
-    # Remove cells by query
+    # ── Remove cells by query ────────────────────────────────────────────────
     for entry in decisions.get("remove_cells", []):
         query = entry["query"]
         reason = entry.get("reason", "")
@@ -726,7 +800,7 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
                 "n_removed": n_removed,
                 "reason": reason,
             })
-            print(f"  Query filter: {n_removed:,} cells ({reason})")
+            print(f"  Remove query '{query}': {n_removed:,} cells ({reason})")
         except Exception as e:
             print(f"  [WARN] Query failed: {query} — {e}")
 
@@ -758,7 +832,6 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
     }
 
     applied_path = os.path.join(output_dir, "decisions_applied.yaml")
-    # Write as simple YAML-like text (no dependency)
     with open(applied_path, "w") as f:
         f.write(f"timestamp: \"{applied['timestamp']}\"\n")
         f.write(f"n_cells_before: {n_before}\n")
@@ -770,14 +843,27 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
             f.write(f"  - type: \"{a['type']}\"\n")
             if "cluster" in a:
                 f.write(f"    cluster: \"{a['cluster']}\"\n")
+            if "clusters" in a:
+                f.write(f"    clusters: {a['clusters']}\n")
             if "query" in a:
                 f.write(f"    query: \"{a['query']}\"\n")
-            f.write(f"    n_removed: {a.get('n_removed', 0)}\n")
+            # keep actions use n_excluded; remove actions use n_removed
+            count = a.get("n_excluded", a.get("n_removed", 0))
+            count_key = "n_excluded" if "n_excluded" in a else "n_removed"
+            f.write(f"    {count_key}: {count}\n")
             r = a.get("reasons", a.get("reason", ""))
             f.write(f"    reason: \"{r}\"\n")
     print(f"  Saved {applied_path}")
 
     # Round manifest
+    def _action_summary(a):
+        if a["type"] == "keep_clusters":
+            return f"keep_clusters {a['clusters']} (-{a.get('n_excluded', 0)})"
+        if a["type"] == "keep_query":
+            return f"keep_query: {a.get('query', '?')} (-{a.get('n_excluded', 0)})"
+        return (f"{a['type']}: {a.get('cluster', a.get('query', '?'))} "
+                f"(-{a.get('n_removed', 0)})")
+
     manifest_path = os.path.join(output_dir, "round_manifest.json")
     manifest = {
         "timestamp": applied["timestamp"],
@@ -785,10 +871,7 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
         "output_cells": n_after,
         "removed": n_total_removed,
         "removal_pct": round(n_total_removed / n_before * 100, 1),
-        "actions_summary": [
-            f"{a['type']}: {a.get('cluster', a.get('query', '?'))} "
-            f"(-{a['n_removed']})" for a in log_entries
-        ],
+        "actions_summary": [_action_summary(a) for a in log_entries],
         "output_files": {
             "filtered_h5ad": "filtered.h5ad",
             "cells_to_keep": "cells_to_keep.csv",
