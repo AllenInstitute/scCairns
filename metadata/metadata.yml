@@ -1,7 +1,5 @@
 metadata_version: 1
-name: code-ocean-capsule-template
-description: Basic structure of a capsule to be customized as needed.
+name: SNS-integration-loops
+description: Documented integration, QC, subsetting 
 authors:
-- name: AIND
-- name: Tom Chartrand
-- name: Meghan Turner
+- name: Zack Lewis

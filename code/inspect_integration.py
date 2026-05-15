@@ -70,7 +70,7 @@ DEFAULT_MARKERS = {
     "Glutamatergic":    ["Slc17a6", "Slc17a7"],
     "GABAergic":        ["Slc32a1", "Gad1", "Gad2"],
     "Nitrergic":        ["Nos1"],
-    "Neuropeptides":    ["Npy", "Sst", "Vip", "Pdyn"],
+    "Neuropeptides":    ["Npy", "Sst", "Vip", "Pdyn", "Chga"],
     "Transcription":    ["Phox2b", "Phox2a", "Sox6", "Shox2"],
     "Satellite glia":   ["Sox10", "Fabp7", "S100b"],
     "Immune":           ["Ptprc", "Cd68"],
