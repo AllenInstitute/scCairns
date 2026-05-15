@@ -37,7 +37,7 @@ RUN pip install -U --no-cache-dir \
     jupyterlab==4.3.4 \
     leidenalg==0.10.2 \
     matplotlib==3.9.3 \
-    numpy==2.1.3 \
+    numpy==1.26.4 \
     pandas==2.2.3 \
     plotly==5.24.1 \
     requests==2.32.3 \
