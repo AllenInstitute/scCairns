@@ -259,6 +259,30 @@ python inspect_integration.py \
 | `covariate_<key>_composition.png` | Stacked bar of covariate fractions per cluster (one per covariate key) |
 | `marker_dotplot.png` | Marker gene expression per cluster |
 | `cluster_silhouettes.png` | Per-cluster silhouette scores in latent space |
+| `marker_fraction_heatmap.png` | Fraction of cells expressing each marker gene per cluster |
+| `cluster_marker_pca.png` | PCA of clusters in marker-fraction space (colored by a single gene) |
+
+### Neuronal Cluster Identification
+
+The script computes a per-cluster marker expression fraction table (proportion of cells expressing each gene above a count threshold) and flags which clusters are likely neuronal:
+
+- **`calculate_percent_expressed`** — for each cluster, computes the fraction of cells with counts > threshold for every marker in the panel. Uses `layers["counts"]` if available, falls back to `.X`.
+- **`identify_neuronal_clusters`** — marks a cluster as neuronal if **any** of the neuronal marker genes (default: `Th, Snap25, Phox2b, Dbh, Chat, Slc18a2, Slc17a6`) exceeds the expression cutoff (default: 50% of cells).
+
+Neuronal cluster IDs are surfaced in:
+1. **`auto_flags.yaml`** — commented-out `keep_clusters:` block listing the suggested IDs.
+2. **`inspection_report.html`** — "Likely Neuronal Clusters" summary box and fraction table.
+3. **`marker_fraction_heatmap.png`** / **`cluster_marker_pca.png`** — visual summaries.
+
+To restrict to neurons only in the next round, copy the commented block from `auto_flags.yaml` into your `decisions.yaml`:
+
+```yaml
+keep_clusters:
+  - cluster: "2"
+    reason: "Confirmed neuronal (Snap25/Th high)"
+  - cluster: "5"
+    reason: "Confirmed neuronal (Snap25/Th high)"
+```
 
 ### Filter Mode (`--decisions`)
 
@@ -335,6 +359,10 @@ Override with `--markers my_markers.json`:
 | `--single-batch-threshold` | 0.90 | Dominance threshold for batch and covariate flagging |
 | `--decisions` | None | Path to `decisions.yaml` to apply |
 | `--report` | off | Generate report even when `--decisions` is set |
+| `--neuronal-markers` | built-in list | Genes used to identify neuronal clusters (space-separated) |
+| `--neuronal-cutoff` | 0.50 | Min fraction of cells expressing a neuronal marker to call a cluster neuronal |
+| `--marker-threshold` | 0.0 | Count threshold for `calculate_percent_expressed` (cells with counts > this are "expressing") |
+| `--pca-color-gene` | `Snap25` | Gene used to color the cluster-marker PCA scatter |
 
 ---
 

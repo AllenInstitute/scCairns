@@ -174,6 +174,11 @@ DEFAULT_MARKERS = {
     "Mitochondrial":    ["mt-Co1", "mt-Co2", "mt-Cytb"],
 }
 
+# Markers used for neuronal cluster identification (fraction-expressed threshold)
+DEFAULT_NEURONAL_MARKERS = [
+    "Th", "Snap25", "Phox2b", "Dbh", "Chat", "Slc18a2", "Slc17a6",
+]
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Cluster QC summary
@@ -509,10 +514,138 @@ def plot_umap_overview(adata, cluster_key, batch_key, output_dir,
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  Neuronal marker analysis
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def calculate_percent_expressed(adata, gene_list, groupby_key, threshold=0.0):
+    """Fraction of cells per cluster expressing each gene above threshold.
+
+    Uses layers["counts"] (raw integers) when available, otherwise .X.
+    Returns a DataFrame: clusters (rows) × genes (columns), values in [0, 1].
+    Clusters are sorted naturally by ID.
+    """
+    import scipy.sparse as sp
+
+    available = [g for g in gene_list if g in adata.var_names]
+    if not available:
+        print("  [WARN] No target genes found in dataset — skipping fraction table.")
+        return pd.DataFrame()
+
+    X = (adata[:, available].layers["counts"]
+         if "counts" in adata.layers
+         else adata[:, available].X)
+    if sp.issparse(X) and not isinstance(X, sp.csr_matrix):
+        X = X.tocsr()
+
+    expressed = (X > threshold).toarray() if sp.issparse(X) else (np.asarray(X) > threshold)
+
+    df = pd.DataFrame(expressed, index=adata.obs_names, columns=available)
+    df["_g"] = adata.obs[groupby_key].values
+
+    num = df.groupby("_g")[available].sum()
+    total = adata.obs[groupby_key].value_counts()
+    frac = num.div(total, axis=0)
+
+    frac.index = frac.index.astype(str)
+    frac = frac.loc[sorted(frac.index, key=lambda x: int(x) if x.isdigit() else x)]
+    return frac
+
+
+def plot_marker_fraction_heatmap(fraction_table, output_dir):
+    """Heatmap of fraction of cells expressing each marker gene per cluster."""
+    if fraction_table.empty:
+        return None
+
+    n_r, n_c = len(fraction_table), len(fraction_table.columns)
+    fig, ax = plt.subplots(
+        figsize=(max(8, n_c * 0.65 + 2), max(5, n_r * 0.35 + 1)))
+    sns.heatmap(fraction_table, annot=True, fmt=".2f", cmap="YlGnBu",
+                vmin=0, vmax=1, linewidths=0.5, ax=ax,
+                cbar_kws={"label": "Fraction expressing", "shrink": 0.6})
+    ax.set_title("Fraction of cells expressing marker genes per cluster")
+    ax.set_ylabel("Cluster")
+    ax.set_xlabel("")
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "marker_fraction_heatmap.png"),
+                dpi=150, bbox_inches="tight")
+    b64 = _fig_to_base64(fig)
+    return b64
+
+
+def plot_cluster_marker_pca(fraction_table, output_dir, color_gene="Snap25"):
+    """PCA of clusters by marker expression profile, coloured by one gene's fraction."""
+    if fraction_table.empty:
+        return None
+
+    mat = fraction_table.fillna(0).values
+    n_comp = min(2, mat.shape[0] - 1, mat.shape[1])
+    if n_comp < 1 or len(fraction_table) < 3:
+        return None
+
+    from sklearn.decomposition import PCA
+    try:
+        pca = PCA(n_components=n_comp).fit(mat)
+        xy = pca.transform(mat)
+        pct_var = pca.explained_variance_ratio_ * 100
+    except Exception as e:
+        print(f"  [WARN] Marker PCA failed: {e}")
+        return None
+
+    x = xy[:, 0]
+    y = xy[:, 1] if xy.shape[1] > 1 else np.zeros(len(xy))
+
+    if color_gene in fraction_table.columns:
+        color_vals = fraction_table[color_gene].fillna(0).values
+        color_label = color_gene
+    else:
+        color_vals = x
+        color_label = "PC1"
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    sc_plot = ax.scatter(x, y, c=color_vals, cmap="viridis", s=80,
+                         edgecolors="black", linewidths=0.5)
+    for i, cl in enumerate(fraction_table.index):
+        ax.annotate(str(cl), (x[i], y[i]), fontsize=8, ha="center",
+                    va="bottom", xytext=(0, 5), textcoords="offset points")
+    ax.set_xlabel(f"PC1 ({pct_var[0]:.1f}%)")
+    ax.set_ylabel(f"PC2 ({pct_var[1]:.1f}%)" if xy.shape[1] > 1 else "PC2")
+    ax.set_title(f"Cluster PCA — marker expression (colour: {color_label})")
+    plt.colorbar(sc_plot, ax=ax, label=f"Fraction {color_label}")
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "cluster_marker_pca.png"),
+                dpi=150, bbox_inches="tight")
+    b64 = _fig_to_base64(fig)
+    return b64
+
+
+def identify_neuronal_clusters(fraction_table, markers, cutoff=0.50):
+    """Clusters where ≥1 neuronal marker exceeds cutoff fraction of cells.
+
+    Returns (cluster_id_list, fraction_subtable_for_those_clusters).
+    The subtable contains all genes from fraction_table (not just the
+    selection markers) so the full expression profile is available for
+    the HTML report.
+    """
+    if fraction_table.empty:
+        return [], pd.DataFrame()
+
+    present = [m for m in markers if m in fraction_table.columns]
+    if not present:
+        print(f"  [WARN] None of the neuronal markers {markers} found in "
+              f"fraction table — skipping neuronal cluster identification.")
+        return [], pd.DataFrame()
+
+    meets = (fraction_table[present] > cutoff).any(axis=1)
+    neuronal_ids = fraction_table.index[meets].tolist()
+    return neuronal_ids, fraction_table.loc[meets]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  YAML I/O
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def write_auto_flags_yaml(flags, summary_df, output_path, thresholds):
+def write_auto_flags_yaml(flags, summary_df, output_path, thresholds,
+                           neuronal_clusters=None):
     """Write auto-flagged clusters to a YAML template the user can edit."""
     lines = [
         "# ──────────────────────────────────────────────────────────────────",
@@ -553,12 +686,26 @@ def write_auto_flags_yaml(flags, summary_df, output_path, thresholds):
         lines.append("remove_clusters: []  # no clusters auto-flagged")
         lines.append("")
 
+    if neuronal_clusters:
+        lines.extend([
+            "# ── Suggested neuronal clusters (marker fraction > threshold) ──────",
+            "# These clusters showed strong expression of neuronal marker genes.",
+            "# Uncomment keep_clusters below to restrict to neurons only:",
+            "# keep_clusters:",
+        ])
+        for cl in neuronal_clusters:
+            lines.append(f"#   - cluster: \"{cl}\"")
+        lines.append("")
+    else:
+        lines.extend([
+            "# Uncomment to keep only specific clusters (all others excluded):",
+            "# keep_clusters:",
+            "#   - cluster: \"1\"",
+            "#     reason: \"Confirmed high-quality neurons\"",
+            "",
+        ])
+
     lines.extend([
-        "# Uncomment to keep only specific clusters (all others excluded):",
-        "# keep_clusters:",
-        "#   - cluster: \"1\"",
-        "#     reason: \"Confirmed high-quality neurons\"",
-        "",
         "# Uncomment to restrict to cells matching a query (AND-chained):",
         "# keep_cells:",
         "#   - query: \"n_genes_by_counts > 500\"",
@@ -629,7 +776,8 @@ def load_decisions(path):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def generate_html_report(summary_df, flags, images, adata, output_path,
-                          cluster_key, batch_key, covariate_keys=None):
+                          cluster_key, batch_key, covariate_keys=None,
+                          neuronal_clusters=None, neuronal_fraction_table=None):
     """Generate a self-contained HTML inspection report."""
     n_flagged = len(flags)
     n_flagged_cells = 0
@@ -683,6 +831,39 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
     <div class="stat-label">Batches ({batch_key})</div>
   </div>"""
 
+    neuro_stat = ""
+    if neuronal_clusters:
+        neuro_stat = f"""
+  <div class="stat">
+    <div class="stat-value" style="color:#2a7a2a;">{len(neuronal_clusters)}</div>
+    <div class="stat-label">Likely neuronal clusters</div>
+  </div>"""
+
+    neuronal_section = ""
+    if neuronal_clusters:
+        ft = neuronal_fraction_table
+        if ft is not None and not ft.empty:
+            header_cells = "".join(f"<th>{g}</th>" for g in ft.columns)
+            body_rows = ""
+            for cl in neuronal_clusters:
+                if cl in ft.index:
+                    cells = "".join(
+                        f"<td>{ft.loc[cl, g]:.0%}</td>" for g in ft.columns)
+                    body_rows += (
+                        f"<tr><td style='text-align:left'><strong>{cl}"
+                        f"</strong></td>{cells}</tr>")
+            neuronal_section = (
+                "<h2>Likely Neuronal Clusters</h2>"
+                f"<p>{len(neuronal_clusters)} cluster(s) with ≥1 neuronal "
+                f"marker above threshold. Suggested as <code>keep_clusters</code> "
+                f"in auto_flags.yaml.</p>"
+                f"<table><tr><th>Cluster</th>{header_cells}</tr>"
+                f"{body_rows}</table>")
+        else:
+            neuronal_section = (
+                "<h2>Likely Neuronal Clusters</h2>"
+                f"<p>Clusters: {', '.join(neuronal_clusters)}</p>")
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -730,6 +911,7 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
   </div>
   {batch_stat}
   {cov_stats_html}
+  {neuro_stat}
 </div>
 
 {"<div class='flag-warn'>" +
@@ -746,6 +928,8 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
 {"<h2>Auto-flagged Clusters</h2><table>" +
  "<tr><th>Cluster</th><th>N cells</th><th>Reasons</th></tr>" +
  flag_rows + "</table>" if flag_rows else ""}
+
+{neuronal_section}
 
 <hr>
 <p style="font-size:12px; color:#999;">
@@ -1004,6 +1188,21 @@ Typical iterative cycle:
     parser.add_argument("--markers", default=None,
                         help="JSON file with marker gene dict. "
                              "Omit to use built-in peripheral neuron markers.")
+    parser.add_argument("--neuronal-markers", nargs="*", default=None,
+                        help="Genes used to identify neuronal clusters by "
+                             "fraction-expressed threshold. Default: "
+                             "Th Snap25 Phox2b Dbh Chat Slc18a2 Slc17a6")
+    parser.add_argument("--neuronal-cutoff", type=float, default=0.50,
+                        help="Fraction threshold for neuronal cluster calling "
+                             "(default: 0.50).")
+    parser.add_argument("--marker-threshold", type=float, default=0.0,
+                        help="Expression threshold used to call a cell "
+                             "'expressing' in the percent-expressed calculation "
+                             "(default: 0 = any positive value; use 1 for "
+                             "raw count > 1).")
+    parser.add_argument("--pca-color-gene", default="Snap25",
+                        help="Gene to colour the cluster marker PCA by "
+                             "(default: Snap25).")
 
     # ── Flagging thresholds ──
     thr = parser.add_argument_group("auto-flagging thresholds")
@@ -1117,7 +1316,14 @@ Typical iterative cycle:
         print("GENERATING INSPECTION REPORT")
         print(f"{'='*60}")
 
-        # 1. Cluster summary
+        # 1. Load marker dict (needed early for fraction analysis)
+        if args.markers:
+            with open(args.markers) as f:
+                marker_dict = json.load(f)
+        else:
+            marker_dict = DEFAULT_MARKERS
+
+        # 2. Cluster QC summary
         print("  Computing cluster QC summary...")
         summary = cluster_qc_summary(
             adata, cluster_key=cluster_key, batch_key=args.batch_key,
@@ -1127,7 +1333,26 @@ Typical iterative cycle:
         print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
         print(summary.to_string())
 
-        # 2. Auto-flag
+        # 3. Marker fraction table + neuronal cluster identification
+        print("\n  Computing marker expression fractions...")
+        flat_markers = [g for genes in marker_dict.values() for g in genes]
+        fraction_table = calculate_percent_expressed(
+            adata, flat_markers, cluster_key,
+            threshold=args.marker_threshold)
+
+        neuronal_markers = args.neuronal_markers or DEFAULT_NEURONAL_MARKERS
+        neuronal_clusters, neuronal_frac = identify_neuronal_clusters(
+            fraction_table, neuronal_markers, args.neuronal_cutoff)
+
+        if neuronal_clusters:
+            print(f"  Likely neuronal clusters "
+                  f"({len(neuronal_clusters)}, "
+                  f"cutoff={args.neuronal_cutoff:.0%}): "
+                  f"{neuronal_clusters}")
+        else:
+            print("  No clusters met neuronal marker criteria.")
+
+        # 4. Auto-flag
         print("\n  Auto-flagging clusters...")
         thresholds = {
             "mt": args.mt_threshold,
@@ -1155,10 +1380,11 @@ Typical iterative cycle:
         write_auto_flags_yaml(
             flags, summary,
             os.path.join(args.output_dir, "auto_flags.yaml"),
-            thresholds)
+            thresholds,
+            neuronal_clusters=neuronal_clusters)
         print("  Saved auto_flags.yaml")
 
-        # 3. Plots
+        # 5. Plots
         print("\n  Generating diagnostic plots...")
         images = {}
 
@@ -1181,25 +1407,28 @@ Typical iterative cycle:
             for key, b64 in cov_plots.items():
                 images[f"Covariate Composition ({key})"] = b64
 
-        # Markers
-        if args.markers:
-            with open(args.markers) as f:
-                marker_dict = json.load(f)
-        else:
-            marker_dict = DEFAULT_MARKERS
         images["Marker Gene Expression"] = plot_marker_dotplot(
             adata, cluster_key, marker_dict, args.output_dir)
+
+        if not fraction_table.empty:
+            images["Marker Fraction Heatmap"] = plot_marker_fraction_heatmap(
+                fraction_table, args.output_dir)
+            images["Cluster Marker PCA"] = plot_cluster_marker_pca(
+                fraction_table, args.output_dir,
+                color_gene=args.pca_color_gene)
 
         images["Cluster Silhouettes"] = plot_cluster_silhouettes(
             summary, args.output_dir)
 
-        # 4. HTML report
+        # 6. HTML report
         print("  Assembling HTML report...")
         generate_html_report(
             summary, flags, images, adata,
             os.path.join(args.output_dir, "inspection_report.html"),
             cluster_key, args.batch_key,
-            covariate_keys=args.covariate_keys)
+            covariate_keys=args.covariate_keys,
+            neuronal_clusters=neuronal_clusters,
+            neuronal_fraction_table=neuronal_frac if not neuronal_frac.empty else None)
         print("  Saved inspection_report.html")
 
     # ══════════════════════════════════════════════════════════════════════
