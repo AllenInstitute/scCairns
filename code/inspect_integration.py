@@ -69,38 +69,91 @@ import seaborn as sns
 #  Model key extraction
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def extract_keys_from_model(model_dir):
-    """Read batch_key and covariate_keys from a saved scVI model directory.
-
-    Looks for attr_dict.json (scvi-tools model save format) and pulls
-    setup_args.  Returns a dict with keys batch_key,
-    categorical_covariate_keys, continuous_covariate_keys, or None if the
-    file is absent or unparseable.
-    """
-    model_dir = Path(model_dir)
-    attr_path = model_dir / "attr_dict.json"
-    if not attr_path.exists():
-        return None
-    try:
-        with open(attr_path) as f:
-            attr = json.load(f)
-    except Exception:
-        return None
-
-    setup_args = attr.get("registry_", {}).get("setup_args", {})
+def _parse_setup_args(setup_args):
+    """Build a keys dict from a scVI setup_args mapping."""
     result = {}
-
     bk = setup_args.get("batch_key")
     if bk:
         result["batch_key"] = bk
-
     cat = setup_args.get("categorical_covariate_keys") or []
     result["categorical_covariate_keys"] = cat if isinstance(cat, list) else [cat]
-
     cont = setup_args.get("continuous_covariate_keys") or []
     result["continuous_covariate_keys"] = cont if isinstance(cont, list) else [cont]
-
     return result
+
+
+def _setup_args_from_pt(pt_path):
+    """Try to extract setup_args from a raw model.pt torch save file.
+
+    scvi-tools < 0.20 packed everything into a single model.pt instead of
+    writing a separate attr_dict.json.  The nested structure varied across
+    versions, so we try the most common paths.
+    """
+    try:
+        import torch  # type: ignore[import-untyped]
+    except ImportError:
+        return None
+    try:
+        data = torch.load(pt_path, map_location="cpu", weights_only=False)
+    except TypeError:
+        data = torch.load(pt_path, map_location="cpu")
+
+    # Common locations across scvi-tools 0.15–0.19
+    candidate_paths = [
+        ["attr_dict", "registry_", "setup_args"],          # 0.20 transition
+        ["attr_dict", "adata_manager_", "registry", "setup_args"],  # 0.17-0.19
+        ["registry_", "setup_args"],
+        ["attr_dict", "setup_args"],
+    ]
+    for path in candidate_paths:
+        d = data
+        for key in path:
+            if not isinstance(d, dict) or key not in d:
+                d = None
+                break
+            d = d[key]
+        if isinstance(d, dict) and "batch_key" in d:
+            return d
+    return None
+
+
+def extract_keys_from_model(model_dir):
+    """Read batch_key and covariate_keys from a saved scVI model directory.
+
+    Tries attr_dict.json first (scvi-tools >= 0.20, the format produced by
+    integrate_sns_scvi.py).  Falls back to loading model.pt directly via
+    torch for models saved with older scvi-tools versions where attr_dict.json
+    was not written.
+
+    Returns a dict with keys batch_key, categorical_covariate_keys,
+    continuous_covariate_keys, or None if neither source is readable.
+    """
+    model_dir = Path(model_dir)
+
+    # ── attr_dict.json (scvi-tools >= 0.20) ──────────────────────────────────
+    attr_path = model_dir / "attr_dict.json"
+    if attr_path.exists():
+        try:
+            with open(attr_path) as f:
+                attr = json.load(f)
+            setup_args = attr.get("registry_", {}).get("setup_args", {})
+            if setup_args:
+                return _parse_setup_args(setup_args)
+        except Exception:
+            pass
+
+    # ── model.pt fallback (older scvi-tools) ─────────────────────────────────
+    pt_path = model_dir / "model.pt"
+    if pt_path.exists():
+        try:
+            setup_args = _setup_args_from_pt(pt_path)
+            if setup_args:
+                print(f"  (Keys read from model.pt — no attr_dict.json found)")
+                return _parse_setup_args(setup_args)
+        except Exception as e:
+            print(f"  [WARN] Could not parse model.pt: {e}")
+
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
