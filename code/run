@@ -2,4 +2,4 @@
 set -ex
 
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
-python -u run_capsule.py "$@"
+python -u inspect_integration.py "$@" --input /data/sns_all_int_260513/scvi_large_Whole_Ganglia_20260513_hvgs/whole_ganglia_scvi_int_20260318.h5ad --output-dir ../results/rounds/round_01/
