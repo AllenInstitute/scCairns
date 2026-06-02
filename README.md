@@ -3,7 +3,6 @@
 Iterative single-cell integration for QC, scVI/scANVI modeling, annotation review,
 filtering decisions, and re-integration.
 
-The active workflow is still script-based:
 
 ```text
 integrate -> inspect -> edit decisions -> filter -> re-integrate

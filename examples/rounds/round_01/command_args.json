@@ -1,0 +1,42 @@
+{
+  "commands": {
+    "integrate": {
+      "timestamp": "2026-06-02T19:05:27.342344",
+      "argv": [
+        "./integrate_sns_scvi.py",
+        "--config",
+        "../examples/pipeline_scvi.yml"
+      ],
+      "args": {
+        "config": "../examples/pipeline_scvi.yml",
+        "input": null,
+        "output_dir": null,
+        "min_genes": null,
+        "min_cells": null,
+        "skip_qc_filter": false,
+        "n_hvgs": null,
+        "hvg_batch_key": null,
+        "hvg_flavor": null,
+        "batch_key": null,
+        "covariate_keys": null,
+        "n_hidden": null,
+        "n_layers": null,
+        "n_latent": null,
+        "dispersion": null,
+        "gene_likelihood": null,
+        "max_epochs": null,
+        "early_stopping_patience": null,
+        "batch_size": null,
+        "sweep": false,
+        "sweep_configs": null,
+        "n_neighbors": null,
+        "umap_spread": null,
+        "umap_min_dist": null,
+        "leiden_resolution": null,
+        "bench_batch_key": null,
+        "bench_label_key": null,
+        "skip_benchmark": false
+      }
+    }
+  }
+}
