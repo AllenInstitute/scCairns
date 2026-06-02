@@ -64,6 +64,17 @@ import pandas as pd
 import scanpy as sc
 import seaborn as sns
 
+from pipeline_config import (
+    ConfigError,
+    SNS_MARKER_SETS,
+    load_pipeline_config,
+    set_if_provided,
+    update_round_manifest,
+    validate_config,
+    write_command_args,
+    write_resolved_config,
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Model key extraction
@@ -160,19 +171,7 @@ def extract_keys_from_model(model_dir):
 #  Default marker genes (peripheral / sympathetic neurons)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-DEFAULT_MARKERS = {
-    "Pan-neuronal":     ["Snap25", "Tubb3", "Rbfox3", "Elavl4", "Isl1"],
-    "Noradrenergic":    ["Th", "Dbh", "Ddc", "Slc6a2"],
-    "Cholinergic":      ["Chat", "Slc18a3", "Slc5a7"],
-    "Glutamatergic":    ["Slc17a6", "Slc17a7"],
-    "GABAergic":        ["Slc32a1", "Gad1", "Gad2"],
-    "Nitrergic":        ["Nos1"],
-    "Neuropeptides":    ["Npy", "Sst", "Vip", "Pdyn", "Chga"],
-    "Transcription":    ["Phox2b", "Phox2a", "Sox6", "Shox2"],
-    "Satellite glia":   ["Sox10", "Fabp7", "S100b"],
-    "Immune":           ["Ptprc", "Cd68"],
-    "Mitochondrial":    ["mt-Co1", "mt-Co2", "mt-Cytb"],
-}
+DEFAULT_MARKERS = SNS_MARKER_SETS
 
 # Markers used for neuronal cluster identification (fraction-expressed threshold)
 DEFAULT_NEURONAL_MARKERS = [
@@ -209,7 +208,8 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
         for col, label in [("n_genes_by_counts", "median_genes"),
                            ("total_counts", "median_counts"),
                            ("pct_counts_mt", "median_pct_mt"),
-                           ("pct_counts_ribo", "median_pct_ribo")]:
+                           ("pct_counts_ribo", "median_pct_ribo"),
+                           ("pct_counts_hb", "median_pct_hb")]:
             if col in sub.columns:
                 row[label] = float(sub[col].median())
 
@@ -298,6 +298,70 @@ def auto_flag_clusters(summary_df, mt_threshold=15.0, min_genes_threshold=400,
     return flags
 
 
+def apply_inspection_cli_overrides(config, args):
+    """Apply backwards-compatible CLI overrides onto the resolved config."""
+    set_if_provided(config, ["data", "input_h5ad"], args.input)
+    set_if_provided(config, ["data", "output_dir"], args.output_dir)
+    set_if_provided(config, ["data", "batch_key"], args.batch_key)
+    set_if_provided(config, ["data", "categorical_covariate_keys"], args.covariate_keys)
+    set_if_provided(config, ["inspection", "cluster_key"], args.cluster_key)
+    set_if_provided(config, ["inspection", "latent_key"], args.latent_key)
+    set_if_provided(config, ["inspection", "umap_key"], args.umap_key)
+    set_if_provided(config, ["inspection", "markers_json"], args.markers)
+    set_if_provided(config, ["inspection", "neuronal_markers"], args.neuronal_markers)
+    set_if_provided(config, ["inspection", "neuronal_cutoff"], args.neuronal_cutoff)
+    set_if_provided(config, ["inspection", "marker_threshold"], args.marker_threshold)
+    set_if_provided(config, ["inspection", "pca_color_gene"], args.pca_color_gene)
+    set_if_provided(
+        config, ["inspection", "auto_flag", "mt_threshold"], args.mt_threshold
+    )
+    set_if_provided(
+        config,
+        ["inspection", "auto_flag", "min_genes_threshold"],
+        args.min_genes_threshold,
+    )
+    set_if_provided(config, ["inspection", "auto_flag", "min_cells"], args.min_cells)
+    set_if_provided(
+        config,
+        ["inspection", "auto_flag", "single_batch_threshold"],
+        args.single_batch_threshold,
+    )
+
+
+def resolve_obs_key(adata, explicit_key, candidates, key_label):
+    """Resolve an obs key, printing the selection when auto-detecting."""
+    if explicit_key and explicit_key != "auto":
+        if explicit_key not in adata.obs.columns:
+            raise ValueError(f"{key_label} '{explicit_key}' not found in adata.obs.")
+        return explicit_key
+    matches = [c for c in candidates if c in adata.obs.columns]
+    if not matches:
+        return None
+    selected = matches[0]
+    if len(matches) > 1:
+        print(f"  Auto-selected {key_label}: {selected} from {matches}")
+    else:
+        print(f"  Auto-selected {key_label}: {selected}")
+    return selected
+
+
+def resolve_obsm_key(adata, explicit_key, candidates, key_label):
+    """Resolve an obsm key, printing the selection when auto-detecting."""
+    if explicit_key and explicit_key != "auto":
+        if explicit_key not in adata.obsm:
+            raise ValueError(f"{key_label} '{explicit_key}' not found in adata.obsm.")
+        return explicit_key
+    matches = [c for c in candidates if c in adata.obsm]
+    if not matches:
+        return None
+    selected = matches[0]
+    if len(matches) > 1:
+        print(f"  Auto-selected {key_label}: {selected} from {matches}")
+    else:
+        print(f"  Auto-selected {key_label}: {selected}")
+    return selected
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Diagnostic plots
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -330,7 +394,8 @@ def plot_qc_summary_heatmap(summary_df, flags, output_dir):
     """Heatmap of per-cluster QC metrics with flagged clusters highlighted."""
     cols = [c for c in ["n_cells", "median_genes", "median_counts",
                          "median_pct_mt", "median_pct_ribo",
-                         "n_batches", "dominant_batch_frac", "silhouette"]
+                         "median_pct_hb", "n_batches",
+                         "dominant_batch_frac", "silhouette"]
             if c in summary_df.columns]
 
     plot_df = summary_df[cols].copy()
@@ -513,14 +578,115 @@ def plot_umap_overview(adata, cluster_key, batch_key, output_dir,
     return b64
 
 
+def plot_annotation_umaps(adata, prediction_key, confidence_key, output_dir,
+                          umap_key="X_umap"):
+    """UMAP panels for annotation predictions and confidence."""
+    if umap_key not in adata.obsm:
+        return {}
+    results = {}
+    if prediction_key in adata.obs.columns:
+        fig, ax = plt.subplots(figsize=(7, 6))
+        sc.pl.embedding(
+            adata, basis=umap_key, color=prediction_key, ax=ax,
+            legend_loc="right margin", legend_fontsize=7, show=False,
+            size=8, frameon=False)
+        ax.set_title(f"Predicted labels ({prediction_key})")
+        fig.tight_layout()
+        fig.savefig(os.path.join(output_dir, "annotation_labels_umap.png"),
+                    dpi=150, bbox_inches="tight")
+        results["Annotation Labels UMAP"] = _fig_to_base64(fig)
+
+    if confidence_key in adata.obs.columns:
+        fig, ax = plt.subplots(figsize=(7, 6))
+        sc.pl.embedding(
+            adata, basis=umap_key, color=confidence_key, ax=ax,
+            cmap="RdYlGn", show=False, size=8, frameon=False)
+        ax.set_title(f"Prediction confidence ({confidence_key})")
+        fig.tight_layout()
+        fig.savefig(os.path.join(output_dir, "annotation_confidence_umap.png"),
+                    dpi=150, bbox_inches="tight")
+        results["Annotation Confidence UMAP"] = _fig_to_base64(fig)
+    return results
+
+
+def plot_annotation_confidence_distribution(adata, confidence_key, output_dir,
+                                            min_confidence=0.5):
+    """Histogram of annotation confidence."""
+    if confidence_key not in adata.obs.columns:
+        return None
+    values = pd.to_numeric(adata.obs[confidence_key], errors="coerce").dropna()
+    if values.empty:
+        return None
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.hist(values, bins=50, color="steelblue", edgecolor="black", alpha=0.75)
+    ax.axvline(min_confidence, color="red", linestyle="--",
+               label=f"{min_confidence:.2f} threshold")
+    ax.set_xlabel("Prediction confidence")
+    ax.set_ylabel("Number of cells")
+    ax.set_title(f"Annotation confidence distribution ({confidence_key})")
+    ax.legend(fontsize=8)
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "annotation_confidence_distribution.png"),
+                dpi=150, bbox_inches="tight")
+    return _fig_to_base64(fig)
+
+
+def plot_annotation_label_composition(adata, cluster_key, prediction_key,
+                                      output_dir):
+    """Stacked bar chart of predicted labels by cluster."""
+    if prediction_key not in adata.obs.columns:
+        return None
+    return _plot_key_composition(
+        adata, cluster_key, prediction_key, output_dir,
+        "annotation_label_composition.png",
+        title_label="Predicted label")
+
+
+def annotation_low_confidence_summary(adata, cluster_key, prediction_key,
+                                      confidence_key, output_dir,
+                                      min_confidence=0.5):
+    """Summarize low-confidence annotation calls per cluster."""
+    if confidence_key not in adata.obs.columns:
+        return pd.DataFrame()
+    obs = adata.obs[[cluster_key]].copy()
+    obs["_confidence"] = pd.to_numeric(
+        adata.obs[confidence_key], errors="coerce")
+    obs["_low_confidence"] = obs["_confidence"] < min_confidence
+    if prediction_key in adata.obs.columns:
+        obs["_prediction"] = adata.obs[prediction_key].astype(str)
+    else:
+        obs["_prediction"] = ""
+
+    rows = []
+    for cl, sub in obs.groupby(cluster_key):
+        n = len(sub)
+        low = int(sub["_low_confidence"].sum())
+        pred_vc = sub["_prediction"].value_counts()
+        rows.append({
+            "cluster": str(cl),
+            "n_cells": n,
+            "median_confidence": float(sub["_confidence"].median()),
+            "n_low_confidence": low,
+            "frac_low_confidence": float(low / n) if n else 0.0,
+            "dominant_prediction": pred_vc.index[0] if len(pred_vc) else "",
+            "dominant_prediction_frac": (
+                float(pred_vc.iloc[0] / n) if n and len(pred_vc) else 0.0
+            ),
+        })
+    df = pd.DataFrame(rows).set_index("cluster")
+    df.to_csv(os.path.join(output_dir, "annotation_low_confidence_summary.csv"))
+    return df
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Neuronal marker analysis
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def calculate_percent_expressed(adata, gene_list, groupby_key, threshold=0.0):
+def calculate_percent_expressed(adata, gene_list, groupby_key, threshold=0.0,
+                                counts_layer="counts"):
     """Fraction of cells per cluster expressing each gene above threshold.
 
-    Uses layers["counts"] (raw integers) when available, otherwise .X.
+    Uses the configured counts layer when available, otherwise .X.
     Returns a DataFrame: clusters (rows) × genes (columns), values in [0, 1].
     Clusters are sorted naturally by ID.
     """
@@ -531,8 +697,8 @@ def calculate_percent_expressed(adata, gene_list, groupby_key, threshold=0.0):
         print("  [WARN] No target genes found in dataset — skipping fraction table.")
         return pd.DataFrame()
 
-    X = (adata[:, available].layers["counts"]
-         if "counts" in adata.layers
+    X = (adata[:, available].layers[counts_layer]
+         if counts_layer in adata.layers
          else adata[:, available].X)
     if sp.issparse(X) and not isinstance(X, sp.csr_matrix):
         X = X.tocsr()
@@ -777,7 +943,9 @@ def load_decisions(path):
 
 def generate_html_report(summary_df, flags, images, adata, output_path,
                           cluster_key, batch_key, covariate_keys=None,
-                          neuronal_clusters=None, neuronal_fraction_table=None):
+                          neuronal_clusters=None, neuronal_fraction_table=None,
+                          annotation_low_confidence_table=None,
+                          selected_keys=None):
     """Generate a self-contained HTML inspection report."""
     n_flagged = len(flags)
     n_flagged_cells = 0
@@ -864,6 +1032,19 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
                 "<h2>Likely Neuronal Clusters</h2>"
                 f"<p>Clusters: {', '.join(neuronal_clusters)}</p>")
 
+    annotation_section = ""
+    if (annotation_low_confidence_table is not None
+            and not annotation_low_confidence_table.empty):
+        annotation_section = (
+            "<h2>Annotation Confidence Summary</h2>"
+            + annotation_low_confidence_table.round(3).to_html(
+                classes="summary-table", border=0)
+        )
+
+    selected_keys = selected_keys or {}
+    selected_keys_footer = " &middot; ".join(
+        f"{k}: {v}" for k, v in selected_keys.items() if v)
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -931,12 +1112,15 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
 
 {neuronal_section}
 
+{annotation_section}
+
 <hr>
 <p style="font-size:12px; color:#999;">
   Cluster key: {cluster_key} &middot;
   Batch key: {batch_key or "none"} &middot;
   Cells: {adata.n_obs:,} &middot;
   Genes: {adata.n_vars:,}{cov_footer}
+  {"&middot; " + selected_keys_footer if selected_keys_footer else ""}
 </p>
 </body>
 </html>"""
@@ -949,7 +1133,8 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
 #  Apply decisions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
+def apply_decisions(adata, decisions, cluster_key="leiden", output_dir=".",
+                    ignore_failed_queries=False):
     """Apply a decisions dict to filter an AnnData.
 
     Order of operations:
@@ -1004,7 +1189,11 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
             print(f"  Keep query '{query}': "
                   f"{n_excluded:,} cells excluded ({reason})")
         except Exception as e:
-            print(f"  [WARN] Keep query failed: {query} — {e}")
+            msg = f"Keep query failed: {query} — {e}"
+            if ignore_failed_queries:
+                print(f"  [WARN] {msg}")
+            else:
+                raise ValueError(msg) from e
 
     # ── Remove clusters ──────────────────────────────────────────────────────
     for entry in decisions.get("remove_clusters", []):
@@ -1039,7 +1228,11 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
             })
             print(f"  Remove query '{query}': {n_removed:,} cells ({reason})")
         except Exception as e:
-            print(f"  [WARN] Query failed: {query} — {e}")
+            msg = f"Remove query failed: {query} — {e}"
+            if ignore_failed_queries:
+                print(f"  [WARN] {msg}")
+            else:
+                raise ValueError(msg) from e
 
     n_after = int(keep.sum())
     n_total_removed = n_before - n_after
@@ -1101,7 +1294,6 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
         return (f"{a['type']}: {a.get('cluster', a.get('query', '?'))} "
                 f"(-{a.get('n_removed', 0)})")
 
-    manifest_path = os.path.join(output_dir, "round_manifest.json")
     manifest = {
         "timestamp": applied["timestamp"],
         "input_cells": n_before,
@@ -1114,8 +1306,7 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir="."):
             "cells_to_keep": "cells_to_keep.csv",
         },
     }
-    with open(manifest_path, "w") as f:
-        json.dump(manifest, f, indent=2)
+    manifest_path = update_round_manifest(output_dir, "decisions", manifest)
     print(f"  Saved {manifest_path}")
 
     return adata_filtered
@@ -1157,9 +1348,11 @@ Typical iterative cycle:
     )
 
     # ── I/O ──
-    parser.add_argument("--input", required=True,
+    parser.add_argument("--config", default=None,
+                        help="Versioned pipeline YAML config.")
+    parser.add_argument("--input", required=False, default=None,
                         help="Path to integrated h5ad.")
-    parser.add_argument("--output-dir", default=".",
+    parser.add_argument("--output-dir", default=None,
                         help="Output directory (default: current dir).")
 
     # ── Cluster / batch / covariate keys ──
@@ -1192,27 +1385,27 @@ Typical iterative cycle:
                         help="Genes used to identify neuronal clusters by "
                              "fraction-expressed threshold. Default: "
                              "Th Snap25 Phox2b Dbh Chat Slc18a2 Slc17a6")
-    parser.add_argument("--neuronal-cutoff", type=float, default=0.50,
+    parser.add_argument("--neuronal-cutoff", type=float, default=None,
                         help="Fraction threshold for neuronal cluster calling "
                              "(default: 0.50).")
-    parser.add_argument("--marker-threshold", type=float, default=0.0,
+    parser.add_argument("--marker-threshold", type=float, default=None,
                         help="Expression threshold used to call a cell "
                              "'expressing' in the percent-expressed calculation "
                              "(default: 0 = any positive value; use 1 for "
                              "raw count > 1).")
-    parser.add_argument("--pca-color-gene", default="Snap25",
+    parser.add_argument("--pca-color-gene", default=None,
                         help="Gene to colour the cluster marker PCA by "
                              "(default: Snap25).")
 
     # ── Flagging thresholds ──
     thr = parser.add_argument_group("auto-flagging thresholds")
-    thr.add_argument("--mt-threshold", type=float, default=15.0,
+    thr.add_argument("--mt-threshold", type=float, default=None,
                      help="Max median %%MT per cluster (default: 15).")
-    thr.add_argument("--min-genes-threshold", type=float, default=400,
+    thr.add_argument("--min-genes-threshold", type=float, default=None,
                      help="Min median genes per cluster (default: 400).")
-    thr.add_argument("--min-cells", type=int, default=20,
+    thr.add_argument("--min-cells", type=int, default=None,
                      help="Min cells per cluster (default: 20).")
-    thr.add_argument("--single-batch-threshold", type=float, default=0.90,
+    thr.add_argument("--single-batch-threshold", type=float, default=None,
                      help="Fraction above which a cluster is flagged as "
                           "single-batch (default: 0.90).")
 
@@ -1223,7 +1416,27 @@ Typical iterative cycle:
                         help="Generate report even when --decisions is set.")
 
     args = parser.parse_args()
-    os.makedirs(args.output_dir, exist_ok=True)
+    try:
+        config = load_pipeline_config(args.config, legacy_output_dir=".")
+        apply_inspection_cli_overrides(config, args)
+        if args.config and args.input is None:
+            integrated_candidate = Path(config["data"]["output_dir"]) / "integrated.h5ad"
+            if integrated_candidate.exists():
+                config["data"]["input_h5ad"] = str(integrated_candidate)
+        validate_config(config, mode="inspection")
+    except ConfigError as e:
+        parser.error(str(e))
+
+    input_path = config["data"]["input_h5ad"]
+    output_dir = config["data"]["output_dir"]
+    data_cfg = config["data"]
+    qc_cfg = config["qc"]
+    inspection_cfg = config["inspection"]
+    annotation_cfg = config["annotation"]
+    decisions_cfg = config["decisions"]
+    os.makedirs(output_dir, exist_ok=True)
+    write_resolved_config(output_dir, config)
+    write_command_args(output_dir, "inspect", vars(args))
 
     # ══════════════════════════════════════════════════════════════════════
     #  Load
@@ -1231,7 +1444,7 @@ Typical iterative cycle:
     print(f"\n{'='*60}")
     print("LOADING DATA")
     print(f"{'='*60}")
-    adata = ad.read_h5ad(args.input)
+    adata = ad.read_h5ad(input_path)
     print(f"  {adata.n_obs:,} cells x {adata.n_vars:,} genes")
 
     # ── Resolve batch_key / covariate_keys from model or CLI ──
@@ -1243,7 +1456,7 @@ Typical iterative cycle:
         else:
             print(f"  Read model config from {args.model_dir}")
     else:
-        for search_dir in [Path(args.input).parent, Path(args.output_dir)]:
+        for search_dir in [Path(input_path).parent, Path(output_dir)]:
             for candidate in sorted(search_dir.glob("scvi_model_*")):
                 info = extract_keys_from_model(candidate)
                 if info:
@@ -1253,57 +1466,73 @@ Typical iterative cycle:
             if model_info:
                 break
 
-    if args.batch_key is None:
-        if model_info and model_info.get("batch_key"):
-            args.batch_key = model_info["batch_key"]
-            print(f"  Batch key from model: {args.batch_key}")
-        else:
-            args.batch_key = "data_origin"
+    batch_key = data_cfg["batch_key"]
+    if args.batch_key is None and args.config is None and model_info and model_info.get("batch_key"):
+        batch_key = model_info["batch_key"]
+        print(f"  Batch key from model: {batch_key}")
 
-    if args.covariate_keys is None:
+    covariate_keys = data_cfg.get("categorical_covariate_keys", []) or []
+    if args.covariate_keys is None and args.config is None:
         cat_covs = (model_info or {}).get("categorical_covariate_keys", [])
-        args.covariate_keys = [k for k in cat_covs
-                                if k and k != args.batch_key]
-    if args.covariate_keys:
-        print(f"  Covariate keys: {args.covariate_keys}")
+        covariate_keys = [k for k in cat_covs if k and k != batch_key]
+    if covariate_keys:
+        print(f"  Covariate keys: {covariate_keys}")
+    config["data"]["batch_key"] = batch_key
+    config["data"]["categorical_covariate_keys"] = covariate_keys
 
     # ── Auto-detect cluster key ──
-    cluster_key = args.cluster_key
-    if cluster_key is None:
-        for candidate in ["leiden"] + [c for c in adata.obs.columns
-                                        if c.startswith("leiden_")]:
-            if candidate in adata.obs.columns:
-                cluster_key = candidate
-                break
+    cluster_setting = inspection_cfg.get("cluster_key") or "auto"
+    cluster_candidates = ["leiden"] + [
+        c for c in adata.obs.columns if c.startswith("leiden_")
+    ]
+    cluster_key = resolve_obs_key(
+        adata, cluster_setting, cluster_candidates, "cluster key")
     if cluster_key is None or cluster_key not in adata.obs.columns:
         print(f"  [ERROR] No cluster column found. Use --cluster-key.")
         return
     print(f"  Cluster key: {cluster_key}")
 
-    latent_key = args.latent_key
-    if latent_key is None:
-        for candidate in ["X_scVI"] + [k for k in adata.obsm
-                                        if k.startswith("X_scVI_")]:
-            if candidate in adata.obsm:
-                latent_key = candidate
-                break
+    latent_candidates = []
+    if annotation_cfg.get("enabled"):
+        latent_candidates.append("X_scANVI")
+    latent_candidates.extend(["X_scVI"] + [
+        k for k in adata.obsm if k.startswith("X_scVI_")
+    ])
+    latent_key = resolve_obsm_key(
+        adata, inspection_cfg.get("latent_key") or "auto",
+        latent_candidates, "latent key")
     print(f"  Latent key: {latent_key or 'none (silhouette disabled)'}")
 
-    umap_key = args.umap_key
-    if umap_key is None:
-        for candidate in ["X_umap"] + [k for k in adata.obsm
-                                        if k.startswith("X_umap_")]:
-            if candidate in adata.obsm:
-                umap_key = candidate
-                break
+    umap_candidates = []
+    if annotation_cfg.get("enabled"):
+        umap_candidates.append("X_umap_scanvi")
+    umap_candidates.extend(["X_umap"] + [
+        k for k in adata.obsm if k.startswith("X_umap_")
+    ])
+    umap_key = resolve_obsm_key(
+        adata, inspection_cfg.get("umap_key") or "auto",
+        umap_candidates, "UMAP key")
     print(f"  UMAP key: {umap_key or 'none'}")
+    config["inspection"]["cluster_key"] = cluster_key
+    config["inspection"]["latent_key"] = latent_key
+    config["inspection"]["umap_key"] = umap_key
+    write_resolved_config(output_dir, config)
 
     # Ensure QC metrics exist
     if "n_genes_by_counts" not in adata.obs.columns:
         print("  Computing QC metrics...")
-        adata.var["mt"] = adata.var_names.str.startswith("mt-")
-        adata.var["ribo"] = adata.var_names.str.startswith(("rps", "rpl"))
-        sc.pp.calculate_qc_metrics(adata, qc_vars=["mt", "ribo"],
+        gene_names = adata.var_names
+        if data_cfg.get("gene_symbol_case") == "lower":
+            gene_names = gene_names.str.lower()
+        elif data_cfg.get("gene_symbol_case") == "upper":
+            gene_names = gene_names.str.upper()
+        adata.var["mt"] = gene_names.str.startswith(
+            tuple(qc_cfg.get("mt_gene_patterns") or ["mt-"]))
+        adata.var["ribo"] = gene_names.str.startswith(
+            tuple(qc_cfg.get("ribo_gene_patterns") or ["rps", "rpl"]))
+        adata.var["hb"] = gene_names.str.contains(
+            qc_cfg.get("hb_gene_pattern") or "^hb[^(p)]", regex=True)
+        sc.pp.calculate_qc_metrics(adata, qc_vars=["mt", "ribo", "hb"],
                                    inplace=True, log1p=True)
 
     # ══════════════════════════════════════════════════════════════════════
@@ -1317,18 +1546,18 @@ Typical iterative cycle:
         print(f"{'='*60}")
 
         # 1. Load marker dict (needed early for fraction analysis)
-        if args.markers:
-            with open(args.markers) as f:
+        if inspection_cfg.get("markers_json"):
+            with open(inspection_cfg["markers_json"]) as f:
                 marker_dict = json.load(f)
         else:
-            marker_dict = DEFAULT_MARKERS
+            marker_dict = inspection_cfg.get("marker_sets") or {}
 
         # 2. Cluster QC summary
         print("  Computing cluster QC summary...")
         summary = cluster_qc_summary(
-            adata, cluster_key=cluster_key, batch_key=args.batch_key,
-            latent_key=latent_key, covariate_keys=args.covariate_keys)
-        summary.to_csv(os.path.join(args.output_dir,
+            adata, cluster_key=cluster_key, batch_key=batch_key,
+            latent_key=latent_key, covariate_keys=covariate_keys)
+        summary.to_csv(os.path.join(output_dir,
                                      "cluster_qc_summary.csv"))
         print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
         print(summary.to_string())
@@ -1338,35 +1567,39 @@ Typical iterative cycle:
         flat_markers = [g for genes in marker_dict.values() for g in genes]
         fraction_table = calculate_percent_expressed(
             adata, flat_markers, cluster_key,
-            threshold=args.marker_threshold)
+            threshold=inspection_cfg["marker_threshold"],
+            counts_layer=data_cfg["counts_layer"])
 
-        neuronal_markers = args.neuronal_markers or DEFAULT_NEURONAL_MARKERS
+        neuronal_markers = inspection_cfg.get("neuronal_markers") or DEFAULT_NEURONAL_MARKERS
+        neuronal_cutoff = inspection_cfg["neuronal_cutoff"]
         neuronal_clusters, neuronal_frac = identify_neuronal_clusters(
-            fraction_table, neuronal_markers, args.neuronal_cutoff)
+            fraction_table, neuronal_markers, neuronal_cutoff)
 
         if neuronal_clusters:
             print(f"  Likely neuronal clusters "
                   f"({len(neuronal_clusters)}, "
-                  f"cutoff={args.neuronal_cutoff:.0%}): "
+                  f"cutoff={neuronal_cutoff:.0%}): "
                   f"{neuronal_clusters}")
         else:
             print("  No clusters met neuronal marker criteria.")
 
         # 4. Auto-flag
         print("\n  Auto-flagging clusters...")
+        auto_flag_cfg = inspection_cfg["auto_flag"]
         thresholds = {
-            "mt": args.mt_threshold,
-            "min_genes": args.min_genes_threshold,
-            "min_cells": args.min_cells,
-            "single_batch": args.single_batch_threshold,
+            "mt": auto_flag_cfg["mt_threshold"],
+            "min_genes": auto_flag_cfg["min_genes_threshold"],
+            "min_cells": auto_flag_cfg["min_cells"],
+            "single_batch": auto_flag_cfg["single_batch_threshold"],
         }
         flags = auto_flag_clusters(
             summary,
-            mt_threshold=args.mt_threshold,
-            min_genes_threshold=args.min_genes_threshold,
-            min_cells=args.min_cells,
-            single_batch_threshold=args.single_batch_threshold,
-            covariate_keys=args.covariate_keys,
+            mt_threshold=auto_flag_cfg["mt_threshold"],
+            min_genes_threshold=auto_flag_cfg["min_genes_threshold"],
+            min_cells=auto_flag_cfg["min_cells"],
+            single_batch_threshold=auto_flag_cfg["single_batch_threshold"],
+            silhouette_threshold=auto_flag_cfg.get("silhouette_threshold", -0.05),
+            covariate_keys=covariate_keys,
         )
 
         if flags:
@@ -1379,7 +1612,7 @@ Typical iterative cycle:
 
         write_auto_flags_yaml(
             flags, summary,
-            os.path.join(args.output_dir, "auto_flags.yaml"),
+            os.path.join(output_dir, "auto_flags.yaml"),
             thresholds,
             neuronal_clusters=neuronal_clusters)
         print("  Saved auto_flags.yaml")
@@ -1389,47 +1622,94 @@ Typical iterative cycle:
         images = {}
 
         images["UMAP Overview"] = plot_umap_overview(
-            adata, cluster_key, args.batch_key, args.output_dir,
+            adata, cluster_key, batch_key, output_dir,
             umap_key=umap_key or "X_umap")
 
         images["QC Summary Heatmap"] = plot_qc_summary_heatmap(
-            summary, flags, args.output_dir)
+            summary, flags, output_dir)
 
-        if args.batch_key and args.batch_key in adata.obs.columns:
+        if batch_key and batch_key in adata.obs.columns:
             images["Batch Composition"] = plot_batch_composition(
-                adata, cluster_key, args.batch_key, args.output_dir)
+                adata, cluster_key, batch_key, output_dir)
 
-        if args.covariate_keys:
+        if covariate_keys:
             print(f"  Generating covariate composition plots "
-                  f"({args.covariate_keys})...")
+                  f"({covariate_keys})...")
             cov_plots = plot_covariate_compositions(
-                adata, cluster_key, args.covariate_keys, args.output_dir)
+                adata, cluster_key, covariate_keys, output_dir)
             for key, b64 in cov_plots.items():
                 images[f"Covariate Composition ({key})"] = b64
 
         images["Marker Gene Expression"] = plot_marker_dotplot(
-            adata, cluster_key, marker_dict, args.output_dir)
+            adata, cluster_key, marker_dict, output_dir)
 
         if not fraction_table.empty:
             images["Marker Fraction Heatmap"] = plot_marker_fraction_heatmap(
-                fraction_table, args.output_dir)
+                fraction_table, output_dir)
             images["Cluster Marker PCA"] = plot_cluster_marker_pca(
-                fraction_table, args.output_dir,
-                color_gene=args.pca_color_gene)
+                fraction_table, output_dir,
+                color_gene=inspection_cfg["pca_color_gene"])
 
         images["Cluster Silhouettes"] = plot_cluster_silhouettes(
-            summary, args.output_dir)
+            summary, output_dir)
+
+        annotation_low_conf = pd.DataFrame()
+        prediction_key = annotation_cfg.get("prediction_key")
+        confidence_key = annotation_cfg.get("confidence_key")
+        if ((prediction_key and prediction_key in adata.obs.columns)
+                or (confidence_key and confidence_key in adata.obs.columns)):
+            print("  Generating annotation diagnostics...")
+            images.update(plot_annotation_umaps(
+                adata, prediction_key, confidence_key, output_dir,
+                umap_key=umap_key or "X_umap"))
+            images["Annotation Confidence Distribution"] = (
+                plot_annotation_confidence_distribution(
+                    adata, confidence_key, output_dir,
+                    min_confidence=annotation_cfg.get("min_confidence", 0.5))
+            )
+            images["Annotation Label Composition"] = (
+                plot_annotation_label_composition(
+                    adata, cluster_key, prediction_key, output_dir)
+            )
+            annotation_low_conf = annotation_low_confidence_summary(
+                adata, cluster_key, prediction_key, confidence_key, output_dir,
+                min_confidence=annotation_cfg.get("min_confidence", 0.5))
 
         # 6. HTML report
         print("  Assembling HTML report...")
+        selected_keys = {
+            "latent_key": latent_key,
+            "umap_key": umap_key,
+            "cluster_key": cluster_key,
+        }
         generate_html_report(
             summary, flags, images, adata,
-            os.path.join(args.output_dir, "inspection_report.html"),
-            cluster_key, args.batch_key,
-            covariate_keys=args.covariate_keys,
+            os.path.join(output_dir, "inspection_report.html"),
+            cluster_key, batch_key,
+            covariate_keys=covariate_keys,
             neuronal_clusters=neuronal_clusters,
-            neuronal_fraction_table=neuronal_frac if not neuronal_frac.empty else None)
+            neuronal_fraction_table=neuronal_frac if not neuronal_frac.empty else None,
+            annotation_low_confidence_table=annotation_low_conf,
+            selected_keys=selected_keys)
         print("  Saved inspection_report.html")
+
+        update_round_manifest(
+            output_dir,
+            "inspection",
+            {
+                "input_h5ad": input_path,
+                "cluster_key": cluster_key,
+                "latent_key": latent_key,
+                "umap_key": umap_key,
+                "batch_key": batch_key,
+                "covariate_keys": covariate_keys,
+                "thresholds": thresholds,
+                "n_clusters": len(summary),
+                "n_auto_flagged": len(flags),
+                "annotation_prediction_key": prediction_key,
+                "annotation_confidence_key": confidence_key,
+            },
+        )
 
     # ══════════════════════════════════════════════════════════════════════
     #  Filter mode
@@ -1441,10 +1721,12 @@ Typical iterative cycle:
         decisions = load_decisions(args.decisions)
         print(f"  Loaded {args.decisions}")
         apply_decisions(adata, decisions, cluster_key=cluster_key,
-                        output_dir=args.output_dir)
+                        output_dir=output_dir,
+                        ignore_failed_queries=decisions_cfg.get(
+                            "ignore_failed_queries", False))
 
     print(f"\n{'='*60}")
-    print(f"  Done. Outputs in {args.output_dir}/")
+    print(f"  Done. Outputs in {output_dir}/")
     print(f"{'='*60}")
 
 

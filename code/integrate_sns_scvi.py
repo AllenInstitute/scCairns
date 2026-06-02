@@ -47,6 +47,17 @@ import scanpy as sc
 import scvi
 import seaborn as sns
 
+from pipeline_config import (
+    ConfigError,
+    collect_package_versions,
+    load_pipeline_config,
+    set_if_provided,
+    update_round_manifest,
+    validate_config,
+    write_command_args,
+    write_resolved_config,
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Configuration
@@ -63,6 +74,8 @@ class ModelConfig:
     gene_likelihood: str = "nb"
     batch_key: str = "data_origin"
     categorical_covariate_keys: List[str] = field(default_factory=list)
+    continuous_covariate_keys: List[str] = field(default_factory=list)
+    counts_layer: str = "counts"
     hvg_batch_key: str = "tech"
     hvg_flavor: str = "seurat_v3"
     hvg_nbatches: Optional[int] = None  # min batches for HVG; None = no filter
@@ -101,11 +114,29 @@ SWEEP_CONFIGS: Dict[str, dict] = {
 #  QC helpers
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def compute_qc_metrics(adata):
+def _normalise_gene_names_for_matching(var_names, gene_symbol_case="preserve"):
+    """Return gene names transformed for configurable QC pattern matching."""
+    if gene_symbol_case == "lower":
+        return var_names.str.lower()
+    if gene_symbol_case == "upper":
+        return var_names.str.upper()
+    return var_names
+
+
+def compute_qc_metrics(
+    adata,
+    mt_gene_patterns=None,
+    ribo_gene_patterns=None,
+    hb_gene_pattern="^hb[^(p)]",
+    gene_symbol_case="preserve",
+):
     """Annotate mt/ribo/hb genes and compute QC metrics in-place."""
-    adata.var["mt"] = adata.var_names.str.startswith("mt-")
-    adata.var["ribo"] = adata.var_names.str.startswith(("rps", "rpl"))
-    adata.var["hb"] = adata.var_names.str.contains("^hb[^(p)]", regex=True)
+    mt_gene_patterns = mt_gene_patterns or ["mt-"]
+    ribo_gene_patterns = ribo_gene_patterns or ["rps", "rpl"]
+    names = _normalise_gene_names_for_matching(adata.var_names, gene_symbol_case)
+    adata.var["mt"] = names.str.startswith(tuple(mt_gene_patterns))
+    adata.var["ribo"] = names.str.startswith(tuple(ribo_gene_patterns))
+    adata.var["hb"] = names.str.contains(hb_gene_pattern, regex=True)
     sc.pp.calculate_qc_metrics(
         adata, qc_vars=["mt", "ribo", "hb"], inplace=True, log1p=True,
     )
@@ -113,6 +144,9 @@ def compute_qc_metrics(adata):
 
 def plot_qc_violins(adata, output_dir, groupby="data_origin", suffix=""):
     """QC violin plots grouped by a batch variable."""
+    if groupby not in adata.obs.columns:
+        print(f"  [WARN] '{groupby}' not in obs — skipping QC violin plots.")
+        return
     qc_cols = [c for c in ["n_genes_by_counts", "total_counts",
                             "pct_counts_mt", "log1p_total_counts"]
                if c in adata.obs.columns]
@@ -155,8 +189,8 @@ def plot_qc_violins(adata, output_dir, groupby="data_origin", suffix=""):
 #  Data preparation
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def ensure_counts_layer(adata):
-    """Ensure raw integer counts live in adata.layers['counts'] and .X."""
+def ensure_counts_layer(adata, counts_layer="counts"):
+    """Ensure raw integer counts live in the configured layer and .X."""
     from scipy.sparse import issparse
 
     def _looks_like_counts(mat, n_check=200):
@@ -166,34 +200,34 @@ def ensure_counts_layer(adata):
         vals = sample[sample > 0]
         return len(vals) > 0 and np.allclose(vals, np.round(vals))
 
-    if "counts" in adata.layers and _looks_like_counts(adata.layers["counts"]):
-        print("  Using existing 'counts' layer (integer-valued).")
-        adata.X = adata.layers["counts"].copy()
+    if counts_layer in adata.layers and _looks_like_counts(adata.layers[counts_layer]):
+        print(f"  Using existing '{counts_layer}' layer (integer-valued).")
+        adata.X = adata.layers[counts_layer].copy()
         return
 
     if _looks_like_counts(adata.X):
-        print("  .X contains raw counts — copying to layers['counts'].")
-        adata.layers["counts"] = adata.X.copy()
+        print(f"  .X contains raw counts — copying to layers['{counts_layer}'].")
+        adata.layers[counts_layer] = adata.X.copy()
         return
 
     # Fallback: assume X is usable even if not perfectly integer
     print("  [WARN] .X does not look like raw integer counts.")
-    if "counts" not in adata.layers:
-        print("         No 'counts' layer found. Using .X as-is — verify input data.")
-        adata.layers["counts"] = adata.X.copy()
+    if counts_layer not in adata.layers:
+        print(f"         No '{counts_layer}' layer found. Using .X as-is — verify input data.")
+        adata.layers[counts_layer] = adata.X.copy()
     else:
-        print("         Using existing 'counts' layer despite non-integer values.")
-        adata.X = adata.layers["counts"].copy()
+        print(f"         Using existing '{counts_layer}' layer despite non-integer values.")
+        adata.X = adata.layers[counts_layer].copy()
 
 
 def select_hvgs(adata, n_top_genes=3000, batch_key="tech", flavor="seurat_v3",
-                hvg_nbatches=None):
+                hvg_nbatches=None, counts_layer="counts"):
     """Select HVGs on a temporary normalised copy; return gene name list.
 
     The caller's adata is not modified.
     """
     tmp = adata.copy()
-    tmp.X = tmp.layers["counts"].copy()
+    tmp.X = tmp.layers[counts_layer].copy()
 
     if flavor == "seurat":
         # seurat flavor expects log-normalised .X (internally calls expm1)
@@ -245,13 +279,16 @@ def setup_and_train(adata_hvg, config, max_epochs=200,
     # Filter covariate keys to columns actually present
     cat_covs = [c for c in config.categorical_covariate_keys
                 if c in adata_hvg.obs.columns]
+    cont_covs = [c for c in config.continuous_covariate_keys
+                 if c in adata_hvg.obs.columns]
     for c in cat_covs:
         clean_batch_column(adata_hvg, c)
 
     scvi.model.SCVI.setup_anndata(
-        adata_hvg, layer="counts",
+        adata_hvg, layer=config.counts_layer,
         batch_key=config.batch_key,
         categorical_covariate_keys=cat_covs or None,
+        continuous_covariate_keys=cont_covs or None,
     )
 
     model = scvi.model.SCVI(
@@ -266,7 +303,8 @@ def setup_and_train(adata_hvg, config, max_epochs=200,
     print(f"  Architecture: n_hidden={config.n_hidden}, n_layers={config.n_layers}, "
           f"n_latent={config.n_latent}")
     print(f"  Likelihood: {config.gene_likelihood}, dispersion: {config.dispersion}")
-    print(f"  batch_key='{config.batch_key}', covariates={cat_covs or 'none'}")
+    print(f"  batch_key='{config.batch_key}', categorical_covariates={cat_covs or 'none'}")
+    print(f"  continuous_covariates={cont_covs or 'none'}")
 
     model.train(
         max_epochs=max_epochs,
@@ -387,7 +425,7 @@ def plot_umap_grid(adata, umap_keys, leiden_keys, color_vars, output_dir,
     print("  Saved umap_config_comparison.png")
 
 
-def plot_single_umaps(adata, output_dir, basis="X_umap"):
+def plot_single_umaps(adata, output_dir, basis="X_umap", output_name="umap_integration.png"):
     """Standard UMAP panels coloured by available metadata (single-model mode)."""
     candidates = ["data_origin", "tech", "platform_origin",
                    "ganglion_group", "ganglion", "leiden"]
@@ -405,10 +443,10 @@ def plot_single_umaps(adata, output_dir, basis="X_umap"):
             legend_fontsize=7, frameon=False, show=False, ax=ax,
         )
     fig.tight_layout()
-    fig.savefig(os.path.join(output_dir, "umap_integration.png"),
+    fig.savefig(os.path.join(output_dir, output_name),
                 dpi=150, bbox_inches="tight")
     plt.close(fig)
-    print("  Saved umap_integration.png")
+    print(f"  Saved {output_name}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -416,7 +454,8 @@ def plot_single_umaps(adata, output_dir, basis="X_umap"):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_benchmarking(adata, embedding_keys, bench_batch_key,
-                     bench_label_key=None, output_dir=None, n_pca_comps=50):
+                     bench_label_key=None, output_dir=None, n_pca_comps=50,
+                     counts_layer="counts"):
     """Run scIB benchmarking across embedding keys.
 
     Parameters
@@ -438,7 +477,7 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
     if "X_pca" not in adata.obsm:
         print("  Computing PCA baseline for benchmarking...")
         adata_tmp = adata.copy()
-        adata_tmp.X = adata_tmp.layers["counts"].copy()
+        adata_tmp.X = adata_tmp.layers[counts_layer].copy()
         sc.pp.normalize_total(adata_tmp)
         sc.pp.log1p(adata_tmp)
         sc.pp.pca(adata_tmp, n_comps=n_pca_comps)
@@ -523,6 +562,177 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
     return bm, df
 
 
+def apply_integration_cli_overrides(config, args):
+    """Apply backwards-compatible CLI overrides onto the resolved config."""
+    set_if_provided(config, ["data", "input_h5ad"], args.input)
+    set_if_provided(config, ["data", "output_dir"], args.output_dir)
+    set_if_provided(config, ["data", "batch_key"], args.batch_key)
+    set_if_provided(config, ["data", "categorical_covariate_keys"], args.covariate_keys)
+    set_if_provided(config, ["qc", "min_genes"], args.min_genes)
+    set_if_provided(config, ["qc", "min_cells"], args.min_cells)
+    set_if_provided(config, ["integration", "n_hidden"], args.n_hidden)
+    set_if_provided(config, ["integration", "n_layers"], args.n_layers)
+    set_if_provided(config, ["integration", "n_latent"], args.n_latent)
+    set_if_provided(config, ["integration", "dispersion"], args.dispersion)
+    set_if_provided(config, ["integration", "gene_likelihood"], args.gene_likelihood)
+    set_if_provided(config, ["integration", "max_epochs"], args.max_epochs)
+    set_if_provided(
+        config,
+        ["integration", "early_stopping_patience"],
+        args.early_stopping_patience,
+    )
+    set_if_provided(config, ["integration", "batch_size"], args.batch_size)
+    set_if_provided(config, ["integration", "hvg", "n_top_genes"], args.n_hvgs)
+    set_if_provided(config, ["integration", "hvg", "batch_key"], args.hvg_batch_key)
+    set_if_provided(config, ["integration", "hvg", "flavor"], args.hvg_flavor)
+    set_if_provided(config, ["embedding", "n_neighbors"], args.n_neighbors)
+    set_if_provided(config, ["embedding", "umap_spread"], args.umap_spread)
+    set_if_provided(config, ["embedding", "umap_min_dist"], args.umap_min_dist)
+    set_if_provided(
+        config, ["embedding", "leiden_resolution"], args.leiden_resolution
+    )
+    set_if_provided(config, ["benchmark", "batch_key"], args.bench_batch_key)
+    set_if_provided(config, ["benchmark", "label_key"], args.bench_label_key)
+
+    if args.skip_qc_filter:
+        config["qc"]["skip_filter"] = True
+    if args.skip_benchmark:
+        config["benchmark"]["enabled"] = False
+
+
+def config_to_model_config(name, cfg, config):
+    """Create a ModelConfig from a dict plus shared data settings."""
+    hvg_cfg = cfg.get("hvg", {}) or {}
+    return ModelConfig(
+        name=name,
+        n_hidden=cfg.get("n_hidden", config["integration"]["n_hidden"]),
+        n_layers=cfg.get("n_layers", config["integration"]["n_layers"]),
+        n_latent=cfg.get("n_latent", config["integration"]["n_latent"]),
+        dispersion=cfg.get("dispersion", config["integration"]["dispersion"]),
+        gene_likelihood=cfg.get(
+            "gene_likelihood", config["integration"]["gene_likelihood"]
+        ),
+        batch_key=cfg.get("batch_key", config["data"]["batch_key"]),
+        categorical_covariate_keys=cfg.get(
+            "categorical_covariate_keys",
+            config["data"].get("categorical_covariate_keys", []),
+        )
+        or [],
+        continuous_covariate_keys=cfg.get(
+            "continuous_covariate_keys",
+            config["data"].get("continuous_covariate_keys", []),
+        )
+        or [],
+        counts_layer=config["data"]["counts_layer"],
+        hvg_batch_key=cfg.get(
+            "hvg_batch_key",
+            hvg_cfg.get("batch_key", config["integration"]["hvg"]["batch_key"]),
+        ),
+        hvg_flavor=cfg.get(
+            "hvg_flavor",
+            hvg_cfg.get("flavor", config["integration"]["hvg"]["flavor"]),
+        ),
+        hvg_nbatches=cfg.get(
+            "hvg_nbatches",
+            hvg_cfg.get("min_batches", config["integration"]["hvg"].get("min_batches")),
+        ),
+    )
+
+
+def load_sweep_configs_from_args_or_config(args, config):
+    """Return sweep configs from JSON, YAML config, or built-in defaults."""
+    if args.sweep_configs:
+        print(f"  Loading configs from {args.sweep_configs}")
+        with open(args.sweep_configs) as f:
+            raw = json.load(f)
+    elif config["integration"].get("sweep"):
+        raw = config["integration"]["sweep"]
+        if isinstance(raw, list):
+            raw = {entry["name"]: {k: v for k, v in entry.items() if k != "name"}
+                   for entry in raw}
+    else:
+        print("  Using built-in sweep configs.")
+        raw = SWEEP_CONFIGS
+    return {name: config_to_model_config(name, params, config)
+            for name, params in raw.items()}
+
+
+def train_scanvi_from_scvi(model, adata_hvg, adata_full, config, output_dir):
+    """Train scANVI from a fitted SCVI model and store annotation outputs."""
+    annotation = config["annotation"]
+    labels_key = annotation["labels_key"]
+    unlabeled = annotation["unlabeled_category"]
+    prediction_key = annotation["prediction_key"]
+    confidence_key = annotation["confidence_key"]
+
+    if labels_key not in adata_hvg.obs.columns:
+        raise ValueError(
+            f"annotation.labels_key '{labels_key}' is not present in adata.obs."
+        )
+
+    if adata_hvg.obs[labels_key].isna().any():
+        print(
+            f"  [WARN] NaN values in '{labels_key}' — filling with "
+            f"'{unlabeled}' for scANVI."
+        )
+        if adata_hvg.obs[labels_key].dtype.name != "category":
+            adata_hvg.obs[labels_key] = adata_hvg.obs[labels_key].astype("category")
+        if unlabeled not in adata_hvg.obs[labels_key].cat.categories:
+            adata_hvg.obs[labels_key] = (
+                adata_hvg.obs[labels_key].cat.add_categories(unlabeled)
+            )
+        adata_hvg.obs[labels_key] = adata_hvg.obs[labels_key].fillna(unlabeled)
+
+    print("\n  Training scANVI annotation model")
+    print(f"  labels_key='{labels_key}', unlabeled_category='{unlabeled}'")
+    scanvi_model = scvi.model.SCANVI.from_scvi_model(
+        model,
+        labels_key=labels_key,
+        unlabeled_category=unlabeled,
+    )
+    scanvi_model.train(
+        max_epochs=config["integration"]["max_epochs"],
+        batch_size=config["integration"]["batch_size"],
+        early_stopping=True,
+        early_stopping_patience=config["integration"]["early_stopping_patience"],
+        early_stopping_monitor="elbo_validation",
+        check_val_every_n_epoch=1,
+        train_size=0.9,
+    )
+
+    latent = scanvi_model.get_latent_representation()
+    adata_full.obsm["X_scANVI"] = latent
+
+    predictions = scanvi_model.predict()
+    adata_full.obs[prediction_key] = pd.Series(
+        predictions, index=adata_hvg.obs_names
+    ).reindex(adata_full.obs_names).astype("category")
+
+    try:
+        probabilities = scanvi_model.predict(soft=True)
+        if hasattr(probabilities, "max"):
+            confidence = probabilities.max(axis=1)
+            if hasattr(confidence, "values"):
+                confidence = confidence.values
+        else:
+            confidence = np.max(probabilities, axis=1)
+        adata_full.obs[confidence_key] = pd.Series(
+            confidence, index=adata_hvg.obs_names
+        ).reindex(adata_full.obs_names).astype(float)
+    except Exception as e:
+        print(f"  [WARN] Could not compute scANVI prediction confidence: {e}")
+
+    model_dir = os.path.join(output_dir, "scanvi_model_default")
+    os.makedirs(model_dir, exist_ok=True)
+    scanvi_model.save(model_dir, save_anndata=True, overwrite=True)
+    print(f"  scANVI latent stored → obsm['X_scANVI']")
+    print(f"  scANVI predictions stored → obs['{prediction_key}']")
+    if confidence_key in adata_full.obs:
+        print(f"  scANVI confidence stored → obs['{confidence_key}']")
+    print(f"  scANVI model saved → {model_dir}")
+    return scanvi_model, model_dir
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Main
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -572,50 +782,52 @@ Sweep config JSON format:
 
     # ── I/O ──
     io = parser.add_argument_group("input / output")
-    io.add_argument("--input", required=True,
+    io.add_argument("--config", default=None,
+                    help="Versioned pipeline YAML config.")
+    io.add_argument("--input", required=False, default=None,
                     help="Path to pre-concatenated h5ad.")
-    io.add_argument("--output-dir", default="../results",
-                    help="Output directory (default: ../results).")
+    io.add_argument("--output-dir", default=None,
+                    help="Output directory (default: ../results without --config).")
 
     # ── QC ──
     qc = parser.add_argument_group("quality control")
-    qc.add_argument("--min-genes", type=int, default=500,
+    qc.add_argument("--min-genes", type=int, default=None,
                     help="Min genes per cell (default: 500).")
-    qc.add_argument("--min-cells", type=int, default=3,
+    qc.add_argument("--min-cells", type=int, default=None,
                     help="Min cells per gene (default: 3).")
     qc.add_argument("--skip-qc-filter", action="store_true",
                     help="Skip cell/gene filtering (data already filtered).")
 
     # ── HVG ──
     hvg = parser.add_argument_group("HVG selection")
-    hvg.add_argument("--n-hvgs", type=int, default=3000,
+    hvg.add_argument("--n-hvgs", type=int, default=None,
                      help="Number of HVGs (default: 3000).")
-    hvg.add_argument("--hvg-batch-key", default="tech",
+    hvg.add_argument("--hvg-batch-key", default=None,
                      help="Batch key for HVG selection (default: tech).")
-    hvg.add_argument("--hvg-flavor", default="seurat_v3",
+    hvg.add_argument("--hvg-flavor", default=None,
                      choices=["seurat_v3", "seurat", "cell_ranger"],
                      help="HVG flavor (default: seurat_v3).")
 
     # ── Architecture (single-model mode) ──
     arch = parser.add_argument_group("model architecture (single-model mode)")
-    arch.add_argument("--batch-key", default="data_origin",
+    arch.add_argument("--batch-key", default=None,
                       help="Batch key for scVI (default: data_origin).")
-    arch.add_argument("--covariate-keys", nargs="*", default=["tech"],
+    arch.add_argument("--covariate-keys", nargs="*", default=None,
                       help="Categorical covariate keys (default: tech). "
                            "Pass without values to disable.")
-    arch.add_argument("--n-hidden", type=int, default=256)
-    arch.add_argument("--n-layers", type=int, default=3)
-    arch.add_argument("--n-latent", type=int, default=32)
-    arch.add_argument("--dispersion", default="gene-cell",
+    arch.add_argument("--n-hidden", type=int, default=None)
+    arch.add_argument("--n-layers", type=int, default=None)
+    arch.add_argument("--n-latent", type=int, default=None)
+    arch.add_argument("--dispersion", default=None,
                       choices=["gene", "gene-batch", "gene-label", "gene-cell"])
-    arch.add_argument("--gene-likelihood", default="nb",
+    arch.add_argument("--gene-likelihood", default=None,
                       choices=["zinb", "nb", "poisson"])
 
     # ── Training ──
     tr = parser.add_argument_group("training")
-    tr.add_argument("--max-epochs", type=int, default=200)
-    tr.add_argument("--early-stopping-patience", type=int, default=20)
-    tr.add_argument("--batch-size", type=int, default=256)
+    tr.add_argument("--max-epochs", type=int, default=None)
+    tr.add_argument("--early-stopping-patience", type=int, default=None)
+    tr.add_argument("--batch-size", type=int, default=None)
 
     # ── Sweep ──
     sw = parser.add_argument_group("parameter sweep")
@@ -627,10 +839,10 @@ Sweep config JSON format:
 
     # ── UMAP / clustering ──
     um = parser.add_argument_group("UMAP / clustering")
-    um.add_argument("--n-neighbors", type=int, default=30)
-    um.add_argument("--umap-spread", type=float, default=3.0)
-    um.add_argument("--umap-min-dist", type=float, default=0.4)
-    um.add_argument("--leiden-resolution", type=float, default=0.3)
+    um.add_argument("--n-neighbors", type=int, default=None)
+    um.add_argument("--umap-spread", type=float, default=None)
+    um.add_argument("--umap-min-dist", type=float, default=None)
+    um.add_argument("--leiden-resolution", type=float, default=None)
 
     # ── Benchmarking ──
     bm = parser.add_argument_group("scIB benchmarking")
@@ -643,9 +855,27 @@ Sweep config JSON format:
                     help="Skip scIB benchmarking entirely.")
 
     args = parser.parse_args()
-    os.makedirs(args.output_dir, exist_ok=True)
-    if args.bench_batch_key is None:
-        args.bench_batch_key = args.batch_key
+    try:
+        config = load_pipeline_config(args.config, legacy_output_dir="../results")
+        apply_integration_cli_overrides(config, args)
+        if args.sweep and config["annotation"].get("enabled"):
+            raise ConfigError("scANVI annotation is only supported for single-model runs in V1.")
+        validate_config(config, mode="integration")
+    except ConfigError as e:
+        parser.error(str(e))
+
+    input_path = config["data"]["input_h5ad"]
+    output_dir = config["data"]["output_dir"]
+    counts_layer = config["data"]["counts_layer"]
+    data_cfg = config["data"]
+    qc_cfg = config["qc"]
+    integration_cfg = config["integration"]
+    embedding_cfg = config["embedding"]
+    benchmark_cfg = config["benchmark"]
+    annotation_cfg = config["annotation"]
+    os.makedirs(output_dir, exist_ok=True)
+    write_resolved_config(output_dir, config)
+    write_command_args(output_dir, "integrate", vars(args))
 
     # ══════════════════════════════════════════════════════════════════════
     #  1. Load data
@@ -653,11 +883,11 @@ Sweep config JSON format:
     print(f"\n{'='*60}")
     print("1. LOADING DATA")
     print(f"{'='*60}")
-    adata = ad.read_h5ad(args.input)
+    adata = ad.read_h5ad(input_path)
     print(f"  Shape : {adata.n_obs:,} cells x {adata.n_vars:,} genes")
     print(f"  obs   : {list(adata.obs.columns)}")
 
-    ensure_counts_layer(adata)
+    ensure_counts_layer(adata, counts_layer=counts_layer)
 
     # ══════════════════════════════════════════════════════════════════════
     #  2. QC metrics and optional filtering
@@ -665,21 +895,27 @@ Sweep config JSON format:
     print(f"\n{'='*60}")
     print("2. QUALITY CONTROL")
     print(f"{'='*60}")
-    compute_qc_metrics(adata)
-    plot_qc_violins(adata, args.output_dir, groupby=args.batch_key,
+    compute_qc_metrics(
+        adata,
+        mt_gene_patterns=qc_cfg.get("mt_gene_patterns"),
+        ribo_gene_patterns=qc_cfg.get("ribo_gene_patterns"),
+        hb_gene_pattern=qc_cfg.get("hb_gene_pattern"),
+        gene_symbol_case=data_cfg.get("gene_symbol_case", "preserve"),
+    )
+    plot_qc_violins(adata, output_dir, groupby=data_cfg["batch_key"],
                     suffix="prefilter")
 
-    if not args.skip_qc_filter:
+    if qc_cfg.get("enabled", True) and not qc_cfg.get("skip_filter", False):
         n_before = adata.n_obs
-        sc.pp.filter_cells(adata, min_genes=args.min_genes)
-        sc.pp.filter_genes(adata, min_cells=args.min_cells)
+        sc.pp.filter_cells(adata, min_genes=qc_cfg["min_genes"])
+        sc.pp.filter_genes(adata, min_cells=qc_cfg["min_cells"])
         print(f"  Filtered: {n_before:,} -> {adata.n_obs:,} cells")
         # Re-save counts after filtering
-        adata.layers["counts"] = adata.X.copy()
-        plot_qc_violins(adata, args.output_dir, groupby=args.batch_key,
+        adata.layers[counts_layer] = adata.X.copy()
+        plot_qc_violins(adata, output_dir, groupby=data_cfg["batch_key"],
                         suffix="postfilter")
     else:
-        print("  Skipping QC filtering (--skip-qc-filter).")
+        print("  Skipping QC filtering.")
 
     # ══════════════════════════════════════════════════════════════════════
     #  3. Preserve full-gene object
@@ -693,23 +929,17 @@ Sweep config JSON format:
     # ══════════════════════════════════════════════════════════════════════
     models = {}
     embedding_keys = []
+    embedding_key_by_name = {}
+    model_dirs = {}
+    sweep_mode = args.sweep or bool(integration_cfg.get("sweep"))
 
-    if args.sweep:
+    if sweep_mode:
         # ── SWEEP MODE ───────────────────────────────────────────────
         print(f"\n{'='*60}")
         print("4. INTEGRATION — PARAMETER SWEEP")
         print(f"{'='*60}")
 
-        if args.sweep_configs:
-            print(f"  Loading configs from {args.sweep_configs}")
-            with open(args.sweep_configs) as f:
-                raw = json.load(f)
-            configs = {name: ModelConfig(name=name, **params)
-                       for name, params in raw.items()}
-        else:
-            print("  Using built-in sweep configs.")
-            configs = {name: ModelConfig(name=name, **params)
-                       for name, params in SWEEP_CONFIGS.items()}
+        configs = load_sweep_configs_from_args_or_config(args, config)
 
         for name, cfg in configs.items():
             print(f"\n{'─'*50}")
@@ -717,29 +947,32 @@ Sweep config JSON format:
             print(f"{'─'*50}")
 
             hvgs = select_hvgs(
-                adata, n_top_genes=args.n_hvgs,
+                adata, n_top_genes=integration_cfg["hvg"]["n_top_genes"],
                 batch_key=cfg.hvg_batch_key,
                 flavor=cfg.hvg_flavor,
                 hvg_nbatches=cfg.hvg_nbatches,
+                counts_layer=counts_layer,
             )
             print(f"  HVGs: {len(hvgs)}")
 
             adata_hvg = adata[:, hvgs].copy()
-            adata_hvg.layers["counts"] = adata_hvg.X.copy()
+            adata_hvg.layers[counts_layer] = adata_hvg.X.copy()
 
             model = setup_and_train(
                 adata_hvg, cfg,
-                max_epochs=args.max_epochs,
-                early_stopping_patience=args.early_stopping_patience,
-                batch_size=args.batch_size,
-                output_dir=args.output_dir,
+                max_epochs=integration_cfg["max_epochs"],
+                early_stopping_patience=integration_cfg["early_stopping_patience"],
+                batch_size=integration_cfg["batch_size"],
+                output_dir=output_dir,
             )
 
             latent = model.get_latent_representation()
             latent_key = f"X_scVI_{name}"
             adata_full.obsm[latent_key] = latent
             embedding_keys.append(latent_key)
+            embedding_key_by_name[name] = latent_key
             models[name] = model
+            model_dirs[name] = os.path.join(output_dir, f"scvi_model_{name}")
             print(f"  Latent stored → obsm['{latent_key}']")
 
             del adata_hvg; gc.collect()
@@ -752,40 +985,58 @@ Sweep config JSON format:
 
         cfg = ModelConfig(
             name="default",
-            n_hidden=args.n_hidden, n_layers=args.n_layers,
-            n_latent=args.n_latent, dispersion=args.dispersion,
-            gene_likelihood=args.gene_likelihood,
-            batch_key=args.batch_key,
-            categorical_covariate_keys=args.covariate_keys or [],
-            hvg_batch_key=args.hvg_batch_key,
-            hvg_flavor=args.hvg_flavor,
+            n_hidden=integration_cfg["n_hidden"],
+            n_layers=integration_cfg["n_layers"],
+            n_latent=integration_cfg["n_latent"],
+            dispersion=integration_cfg["dispersion"],
+            gene_likelihood=integration_cfg["gene_likelihood"],
+            batch_key=data_cfg["batch_key"],
+            categorical_covariate_keys=data_cfg.get("categorical_covariate_keys", []) or [],
+            continuous_covariate_keys=data_cfg.get("continuous_covariate_keys", []) or [],
+            counts_layer=counts_layer,
+            hvg_batch_key=integration_cfg["hvg"]["batch_key"],
+            hvg_flavor=integration_cfg["hvg"]["flavor"],
+            hvg_nbatches=integration_cfg["hvg"].get("min_batches"),
         )
 
         hvgs = select_hvgs(
-            adata, n_top_genes=args.n_hvgs,
+            adata, n_top_genes=integration_cfg["hvg"]["n_top_genes"],
             batch_key=cfg.hvg_batch_key, flavor=cfg.hvg_flavor,
+            hvg_nbatches=cfg.hvg_nbatches,
+            counts_layer=counts_layer,
         )
         print(f"  HVGs: {len(hvgs)}")
 
         pd.DataFrame({"gene": hvgs}).to_csv(
-            os.path.join(args.output_dir, "hvg_genes.csv"), index=False)
+            os.path.join(output_dir, "hvg_genes.csv"), index=False)
         adata_full.var["highly_variable"] = adata_full.var_names.isin(hvgs)
 
         adata_hvg = adata[:, hvgs].copy()
-        adata_hvg.layers["counts"] = adata_hvg.X.copy()
+        adata_hvg.layers[counts_layer] = adata_hvg.X.copy()
 
         model = setup_and_train(
             adata_hvg, cfg,
-            max_epochs=args.max_epochs,
-            early_stopping_patience=args.early_stopping_patience,
-            batch_size=args.batch_size,
-            output_dir=args.output_dir,
+            max_epochs=integration_cfg["max_epochs"],
+            early_stopping_patience=integration_cfg["early_stopping_patience"],
+            batch_size=integration_cfg["batch_size"],
+            output_dir=output_dir,
         )
 
         latent = model.get_latent_representation()
         adata_full.obsm["X_scVI"] = latent
         embedding_keys.append("X_scVI")
+        embedding_key_by_name["default"] = "X_scVI"
         models["default"] = model
+        model_dirs["default"] = os.path.join(output_dir, "scvi_model_default")
+
+        scanvi_model_dir = None
+        if annotation_cfg.get("enabled"):
+            scanvi_model, scanvi_model_dir = train_scanvi_from_scvi(
+                model, adata_hvg, adata_full, config, output_dir
+            )
+            embedding_keys.append("X_scANVI")
+            embedding_key_by_name["scanvi"] = "X_scANVI"
+            model_dirs["scanvi"] = scanvi_model_dir
 
         del adata_hvg; gc.collect()
 
@@ -797,7 +1048,7 @@ Sweep config JSON format:
     print(f"\n{'='*60}")
     print("5. TRAINING DIAGNOSTICS")
     print(f"{'='*60}")
-    plot_training_curves(models, args.output_dir)
+    plot_training_curves(models, output_dir)
 
     # ══════════════════════════════════════════════════════════════════════
     #  6. UMAP + Leiden
@@ -808,28 +1059,36 @@ Sweep config JSON format:
     umap_keys = {}
     leiden_keys = {}
 
-    for name in models:
-        latent_key = f"X_scVI_{name}" if args.sweep else "X_scVI"
-        umap_key = f"X_umap_{name}" if args.sweep else "X_umap"
-        leiden_key = f"leiden_{name}" if args.sweep else "leiden"
-        nbr_key = f"neighbors_{name}" if args.sweep else "neighbors"
+    for name, latent_key in embedding_key_by_name.items():
+        if sweep_mode:
+            umap_key = f"X_umap_{name}"
+            leiden_key = f"leiden_{name}"
+            nbr_key = f"neighbors_{name}"
+        elif name == "default":
+            umap_key = "X_umap"
+            leiden_key = "leiden"
+            nbr_key = "neighbors"
+        else:
+            umap_key = f"X_umap_{name}"
+            leiden_key = f"leiden_{name}"
+            nbr_key = f"neighbors_{name}"
 
         n_latent = adata_full.obsm[latent_key].shape[1]
-        print(f"  {name}: neighbors (n={args.n_neighbors}) -> UMAP -> "
-              f"leiden (res={args.leiden_resolution})")
+        print(f"  {name}: neighbors (n={embedding_cfg['n_neighbors']}) -> UMAP -> "
+              f"leiden (res={embedding_cfg['leiden_resolution']})")
 
         sc.pp.neighbors(adata_full, use_rep=latent_key,
-                        n_neighbors=args.n_neighbors,
+                        n_neighbors=embedding_cfg["n_neighbors"],
                         n_pcs=n_latent,
                         key_added=nbr_key)
         sc.tl.umap(adata_full,
                     neighbors_key=nbr_key,
                     key_added=umap_key,
-                    spread=args.umap_spread,
-                    min_dist=args.umap_min_dist)
+                    spread=embedding_cfg["umap_spread"],
+                    min_dist=embedding_cfg["umap_min_dist"])
         sc.tl.leiden(adata_full,
                      neighbors_key=nbr_key,
-                     resolution=args.leiden_resolution,
+                     resolution=embedding_cfg["leiden_resolution"],
                      flavor="igraph",
                      key_added=leiden_key)
 
@@ -842,32 +1101,43 @@ Sweep config JSON format:
     print(f"\n{'='*60}")
     print("7. UMAP VISUALISATION")
     print(f"{'='*60}")
-    if args.sweep:
+    if sweep_mode:
         color_candidates = ["data_origin", "tech", "platform_origin",
                             "ganglion_group", "leiden"]
         color_vars = [c for c in color_candidates
                       if c in adata_full.obs.columns or c == "leiden"]
         plot_umap_grid(adata_full, umap_keys, leiden_keys, color_vars,
-                       args.output_dir)
+                       output_dir)
     else:
-        plot_single_umaps(adata_full, args.output_dir)
+        plot_single_umaps(adata_full, output_dir)
+        if "X_umap_scanvi" in adata_full.obsm:
+            plot_single_umaps(
+                adata_full,
+                output_dir,
+                basis="X_umap_scanvi",
+                output_name="umap_scanvi_annotation.png",
+            )
 
     # ══════════════════════════════════════════════════════════════════════
     #  8. scIB benchmarking
     # ══════════════════════════════════════════════════════════════════════
-    if not args.skip_benchmark:
+    if benchmark_cfg.get("enabled", True):
         print(f"\n{'='*60}")
         print("8. scIB BENCHMARKING")
         print(f"{'='*60}")
+        bench_batch_key = benchmark_cfg.get("batch_key")
+        if bench_batch_key == "auto":
+            bench_batch_key = data_cfg["batch_key"]
         run_benchmarking(
             adata_full,
             embedding_keys=embedding_keys,
-            bench_batch_key=args.bench_batch_key,
-            bench_label_key=args.bench_label_key,
-            output_dir=args.output_dir,
+            bench_batch_key=bench_batch_key,
+            bench_label_key=benchmark_cfg.get("label_key"),
+            output_dir=output_dir,
+            counts_layer=counts_layer,
         )
     else:
-        print("\n  Skipping scIB benchmarking (--skip-benchmark).")
+        print("\n  Skipping scIB benchmarking.")
 
     # ══════════════════════════════════════════════════════════════════════
     #  9. Save integrated object — ALL genes
@@ -880,11 +1150,11 @@ Sweep config JSON format:
         adata_full.obs["cell_id"] = adata_full.obs_names
 
     # Normalise .X for downstream use; raw counts stay in layers
-    adata_full.X = adata_full.layers["counts"].copy()
+    adata_full.X = adata_full.layers[counts_layer].copy()
     sc.pp.normalize_total(adata_full)
     sc.pp.log1p(adata_full)
 
-    out_path = os.path.join(args.output_dir, "integrated.h5ad")
+    out_path = os.path.join(output_dir, "integrated.h5ad")
     adata_full.write_h5ad(out_path)
     print(f"  Saved {out_path}")
     print(f"  Shape  : {adata_full.n_obs:,} cells x {adata_full.n_vars:,} genes")
@@ -892,9 +1162,30 @@ Sweep config JSON format:
     print(f"  layers : {list(adata_full.layers.keys())}")
     print(f"  obsm   : {list(adata_full.obsm.keys())}")
 
+    update_round_manifest(
+        output_dir,
+        "integration",
+        {
+            "input_h5ad": input_path,
+            "output_h5ad": out_path,
+            "n_cells": adata_full.n_obs,
+            "n_genes": adata_full.n_vars,
+            "model_type": integration_cfg["model_type"],
+            "annotation_enabled": annotation_cfg.get("enabled", False),
+            "embedding_keys": embedding_keys,
+            "umap_keys": umap_keys,
+            "cluster_keys": leiden_keys,
+            "model_dirs": model_dirs,
+            "counts_layer": counts_layer,
+            "package_versions": collect_package_versions(
+                ["anndata", "scanpy", "scvi-tools", "scib-metrics"]
+            ),
+        },
+    )
+
     # Summary
     print(f"\n{'='*60}")
-    print(f"  Done. All outputs in {args.output_dir}/")
+    print(f"  Done. All outputs in {output_dir}/")
     print(f"{'='*60}")
 
 
