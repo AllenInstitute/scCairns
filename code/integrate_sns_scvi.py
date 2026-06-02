@@ -591,19 +591,23 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
               f"(bio-conservation metrics disabled).")
 
     # Metric configuration
-    bio = BioConservation(
-        **_supported_metric_kwargs(
-            BioConservation,
-            {
-                "isolated_labels": False,
-                "silhouette_label": use_bio,
-                "clisi_knn": use_bio,
-                "nmi_ari_cluster_labels_kmeans": False,
-                "nmi_ari_cluster_labels_leiden": False,
-            },
-            name="BioConservation",
+    if use_bio:
+        bio = BioConservation(
+            **_supported_metric_kwargs(
+                BioConservation,
+                {
+                    "isolated_labels": False,
+                    "silhouette_label": True,
+                    "clisi_knn": True,
+                    "nmi_ari_cluster_labels_kmeans": False,
+                    "nmi_ari_cluster_labels_leiden": False,
+                },
+                name="BioConservation",
+            )
         )
-    )
+    else:
+        bio = None
+
     batch = BatchCorrection(
         **_supported_metric_kwargs(
             BatchCorrection,
@@ -621,8 +625,14 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
         )
     )
 
+    benchmark_adata = adata
+    if not adata.obs_names.is_unique:
+        print("  [WARN] Observation names are not unique; using a benchmark copy with unique names.")
+        benchmark_adata = adata.copy()
+        benchmark_adata.obs_names_make_unique()
+
     bm = Benchmarker(
-        adata,
+        benchmark_adata,
         batch_key=bench_batch_key,
         label_key=label_key,
         embedding_obsm_keys=embedding_keys,
