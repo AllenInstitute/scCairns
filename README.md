@@ -1,422 +1,249 @@
-# SNS scVI Integration Pipeline
+# Config-Driven scVI/scANVI Integration Pipeline
 
-Iterative scVI integration and refinement for sympathetic nervous system (SNS) single-cell/single-nucleus RNA-seq data across multiple technologies (10x Chromium, ScaleBio, SMART-seq).
+Iterative single-cell integration for QC, scVI/scANVI modeling, annotation review,
+filtering decisions, and re-integration.
 
-## Overview
+The active workflow is still script-based:
 
-Two scripts form an iterative cycle:
-
+```text
+integrate -> inspect -> edit decisions -> filter -> re-integrate
 ```
-integrate  →  inspect  →  (edit decisions)  →  filter  →  re-integrate  →  ...
-```
+
+The primary interface is now a versioned YAML config. Existing CLI arguments are
+still supported as overrides for common fields.
+
+## Main Scripts
 
 | Script | Role |
 |---|---|
-| `integrate_sns_scvi.py` | scVI model training, batch integration, UMAP/leiden, scIB benchmarking |
-| `inspect_integration.py` | Post-integration QC report, automated cluster flagging, decision-based filtering |
-
-The integration script produces an integrated h5ad. The inspection script generates a diagnostic report, auto-flags problematic clusters, and — once you've reviewed and edited the flags — exports a filtered dataset for the next round. Each round lives in its own directory with full provenance.
-
-## Requirements
-
-```
-scanpy>=1.10
-anndata>=0.10
-scvi-tools>=1.1
-scib-metrics         # optional, for benchmarking
-scikit-learn
-matplotlib
-seaborn
-leidenalg
-igraph
-pyyaml               # optional, for decisions.yaml parsing (fallback parser included)
-```
+| `code/integrate_sns_scvi.py` | QC, HVG selection, scVI training, optional scANVI annotation, UMAP/leiden, benchmarking, integrated h5ad output |
+| `code/inspect_integration.py` | Integration report, cluster QC, marker/annotation diagnostics, auto flags, decisions-based filtering |
+| `code/pipeline_config.py` | Shared V1 config defaults, validation, and provenance helpers |
+| `code/04_visualize.py` | Legacy plotting script; label-transfer plots are now handled by inspection when annotation columns exist |
 
 ## Quick Start
 
-```bash
-# Round 1: integrate
-python integrate_sns_scvi.py \
-    --input data/combined_sns_adata.h5ad \
-    --output-dir rounds/round_01/
-
-# Round 1: inspect (batch_key and covariate_keys auto-detected from the saved model)
-python inspect_integration.py \
-    --input rounds/round_01/integrated.h5ad \
-    --output-dir rounds/round_01/
-
-# Review rounds/round_01/inspection_report.html
-# Edit rounds/round_01/auto_flags.yaml → save as decisions.yaml
-
-# Round 2: apply decisions + export filtered data
-python inspect_integration.py \
-    --input rounds/round_01/integrated.h5ad \
-    --decisions rounds/round_01/decisions.yaml \
-    --output-dir rounds/round_02/
-
-# Round 2: re-integrate on filtered data
-python integrate_sns_scvi.py \
-    --input rounds/round_02/filtered.h5ad \
-    --output-dir rounds/round_02/ \
-    --skip-qc-filter
-
-# Round 2: inspect again
-python inspect_integration.py \
-    --input rounds/round_02/integrated.h5ad \
-    --output-dir rounds/round_02/
-```
-
-## Directory Structure
-
-After two rounds the project looks like:
-
-```
-project/
-├── data/
-│   └── combined_sns_adata.h5ad          # Pre-concatenated input
-├── rounds/
-│   ├── round_01/
-│   │   ├── integrated.h5ad              # All genes, scVI latent + UMAP + leiden
-│   │   ├── scvi_model_default/          # Saved scVI model (batch/covariate keys read from here)
-│   │   ├── hvg_genes.csv
-│   │   ├── training_convergence.png
-│   │   ├── umap_integration.png
-│   │   ├── scib_benchmark_results.csv
-│   │   ├── qc_violins_prefilter.png
-│   │   ├── inspection_report.html       # ← review this
-│   │   ├── cluster_qc_summary.csv
-│   │   ├── auto_flags.yaml              # ← auto-generated
-│   │   ├── decisions.yaml               # ← you create this
-│   │   ├── qc_summary_heatmap.png
-│   │   ├── batch_composition.png
-│   │   ├── covariate_<key>_composition.png   # one per covariate key
-│   │   ├── marker_dotplot.png
-│   │   └── cluster_silhouettes.png
-│   └── round_02/
-│       ├── cells_to_keep.csv            # From decisions applied
-│       ├── filtered.h5ad                # Filtered input for this round
-│       ├── decisions_applied.yaml       # Provenance log
-│       ├── round_manifest.json
-│       ├── integrated.h5ad
-│       └── ...
-└── scripts/
-    ├── integrate_sns_scvi.py
-    └── inspect_integration.py
-```
-
----
-
-## `integrate_sns_scvi.py`
-
-### Modes
-
-**Single model (default).** Trains one scVI model with the specified architecture. Good for initial exploration or when you've already identified the best config via a sweep.
+Copy one of the example configs and edit paths/metadata keys:
 
 ```bash
-python integrate_sns_scvi.py --input combined.h5ad
+cp examples/pipeline_scvi.yml pipeline.yml
 ```
 
-**Parameter sweep (`--sweep`).** Trains multiple scVI models with different architectures, batch keys, and covariate settings. Generates a UMAP comparison grid and scIB benchmarks across all configs.
+Run the first integration round:
 
 ```bash
-python integrate_sns_scvi.py --input combined.h5ad --sweep
+python code/integrate_sns_scvi.py --config pipeline.yml
 ```
 
-### Default Architecture
+Inspect the integrated object:
 
-Matches the "large" config from the combined SNS notebook:
+```bash
+python code/inspect_integration.py --config pipeline.yml
+```
 
-| Parameter | Default |
-|---|---|
-| `n_hidden` | 256 |
-| `n_layers` | 3 |
-| `n_latent` | 32 |
-| `dispersion` | gene-cell |
-| `gene_likelihood` | nb |
-| `batch_key` | data_origin |
-| `covariate_keys` | tech |
+Review `inspection_report.html`, edit `auto_flags.yaml` into `decisions.yaml`,
+then export a filtered object for the next round:
 
-### Built-in Sweep Configs
+```bash
+python code/inspect_integration.py \
+  --config pipeline.yml \
+  --input rounds/round_01/integrated.h5ad \
+  --decisions rounds/round_01/decisions.yaml \
+  --output-dir rounds/round_02
+```
 
-From the 20260325 sympathetic refinement notebook:
+For the next round, update `data.input_h5ad` to `rounds/round_02/filtered.h5ad`
+and set `data.output_dir` to `rounds/round_02`, then re-run integration.
 
-| Config | n_hidden | batch_key | Covariates | HVG flavor |
-|---|---|---|---|---|
-| `custom2_tech` | 16 | tech | — | seurat, ≥3 batches |
-| `custom2_platform` | 16 | platform_origin | — | seurat, ≥3 batches |
-| `medium_platform` | 128 | platform_origin | — | seurat, ≥3 batches |
-| `medium_platform_cov` | 128 | platform_origin | data_origin | seurat, ≥3 batches |
+## Config Schema
 
-Override with `--sweep-configs my_configs.json` (see `--help` for format).
+Minimal scVI-only config:
 
-### scIB Benchmarking
+```yaml
+pipeline_version: 1
 
-Enabled by default. Since cell type annotations are not available, only batch-correction metrics are computed:
+data:
+  input_h5ad: data/combined_sns_adata.h5ad
+  output_dir: rounds/round_01
+  counts_layer: counts
+  batch_key: data_origin
+  categorical_covariate_keys: [tech]
+  continuous_covariate_keys: []
+  species: mouse
+  gene_symbol_case: preserve
 
-| Metric | What it measures |
-|---|---|
-| Silhouette (batch) | Whether batches overlap within clusters |
-| Graph connectivity | Whether the kNN graph connects cells across batches |
-| PCR comparison | Reduction in batch-driven variance vs. PCA baseline |
+qc:
+  enabled: true
+  min_genes: 500
+  min_cells: 3
+  mt_gene_patterns: ["mt-"]
+  ribo_gene_patterns: ["rps", "rpl"]
+  hb_gene_pattern: "^hb[^(p)]"
 
-Pass `--bench-label-key ganglion_group` to additionally enable bio-conservation metrics (silhouette label, cLISI) using a proxy label.
+integration:
+  model_type: scvi
+  n_hidden: 256
+  n_layers: 3
+  n_latent: 32
+  dispersion: gene-cell
+  gene_likelihood: nb
+  max_epochs: 200
+  early_stopping_patience: 20
+  batch_size: 256
+  hvg:
+    n_top_genes: 3000
+    batch_key: tech
+    flavor: seurat_v3
+    min_batches: null
+  sweep: []
 
-### Key Output: `integrated.h5ad`
+annotation:
+  enabled: false
+  method: scanvi
+  labels_key: null
+  unlabeled_category: Unknown
+  prediction_key: scanvi_label
+  confidence_key: scanvi_confidence
+  min_confidence: 0.5
 
-Contains **all genes** (not just HVGs):
+embedding:
+  n_neighbors: 30
+  umap_min_dist: 0.4
+  umap_spread: 3.0
+  leiden_resolution: 0.3
+
+inspection:
+  cluster_key: auto
+  latent_key: auto
+  umap_key: auto
+  markers_json: null
+  marker_threshold: 0.0
+  neuronal_cutoff: 0.5
+  auto_flag:
+    mt_threshold: 15.0
+    min_genes_threshold: 400
+    min_cells: 20
+    single_batch_threshold: 0.90
+
+benchmark:
+  enabled: true
+  batch_key: auto
+  label_key: null
+
+decisions:
+  ignore_failed_queries: false
+```
+
+See:
+
+- `examples/pipeline_scvi.yml` for scVI-only integration.
+- `examples/pipeline_scanvi.yml` for scVI pretraining plus scANVI labels.
+- `examples/pipeline_sweep.yml` for config-driven model sweeps.
+
+## scANVI Annotation
+
+Enable scANVI by setting:
+
+```yaml
+annotation:
+  enabled: true
+  method: scanvi
+  labels_key: seed_cell_type
+  unlabeled_category: Unknown
+  prediction_key: scanvi_label
+  confidence_key: scanvi_confidence
+  min_confidence: 0.5
+```
+
+The integration script trains scVI first, initializes scANVI from that model,
+then writes:
 
 | Slot | Contents |
 |---|---|
-| `.X` | Normalised, log1p |
-| `.layers["counts"]` | Raw integer counts |
-| `.obsm["X_scVI"]` | Latent representation (or `X_scVI_{config}` in sweep mode) |
-| `.obsm["X_umap"]` | UMAP coordinates |
-| `.obs["leiden"]` | Leiden cluster assignments |
-| `.var["highly_variable"]` | Boolean HVG mask |
+| `.obsm["X_scANVI"]` | scANVI latent representation |
+| `.obs["scanvi_label"]` | Predicted label, or configured `prediction_key` |
+| `.obs["scanvi_confidence"]` | Maximum predicted class probability, or configured `confidence_key` |
+| `.obsm["X_umap_scanvi"]` | UMAP from the scANVI latent |
+| `.obs["leiden_scanvi"]` | Leiden clusters from the scANVI latent |
 
-### Full CLI Reference
+Inspection adds annotation UMAPs, confidence distribution, label composition by
+cluster, and low-confidence cluster summaries when those columns are present.
 
-```
-python integrate_sns_scvi.py --help
-```
+## CLI Overrides
 
-<details>
-<summary>Key arguments</summary>
-
-| Argument | Default | Description |
-|---|---|---|
-| `--input` | (required) | Path to pre-concatenated h5ad |
-| `--output-dir` | `../results` | Output directory |
-| `--batch-key` | `data_origin` | Batch key for scVI |
-| `--covariate-keys` | `tech` | Categorical covariates |
-| `--n-hidden` | 256 | Hidden layer size |
-| `--n-layers` | 3 | Number of layers |
-| `--n-latent` | 32 | Latent dimensions |
-| `--gene-likelihood` | `nb` | `nb`, `zinb`, or `poisson` |
-| `--n-hvgs` | 3000 | Number of HVGs |
-| `--hvg-batch-key` | `tech` | Batch key for HVG selection |
-| `--hvg-flavor` | `seurat_v3` | HVG method |
-| `--max-epochs` | 200 | Training epochs |
-| `--sweep` | off | Enable parameter sweep |
-| `--sweep-configs` | built-in | JSON file with sweep configs |
-| `--n-neighbors` | 30 | Neighbors for UMAP/leiden |
-| `--leiden-resolution` | 0.3 | Leiden resolution |
-| `--bench-batch-key` | (same as batch-key) | scIB batch key |
-| `--bench-label-key` | None | scIB label key (optional proxy) |
-| `--skip-qc-filter` | off | Skip cell/gene filtering |
-| `--skip-benchmark` | off | Skip scIB benchmarking |
-
-</details>
-
----
-
-## `inspect_integration.py`
-
-### Key detection (batch and covariate keys)
-
-The script reads `batch_key` and `categorical_covariate_keys` directly from the saved scVI model so you don't need to specify them manually.  When `--model-dir` is omitted it auto-searches for any `scvi_model_*` directory alongside the input h5ad or in the output directory.
+YAML is the source of truth, but common CLI overrides still work:
 
 ```bash
-# Keys resolved automatically from scvi_model_default/attr_dict.json
-python inspect_integration.py \
-    --input rounds/round_01/integrated.h5ad \
-    --output-dir rounds/round_01/
-
-# Or point explicitly at the model directory
-python inspect_integration.py \
-    --input rounds/round_01/integrated.h5ad \
-    --model-dir rounds/round_01/scvi_model_default/ \
-    --output-dir rounds/round_01/
-
-# Override keys manually if needed
-python inspect_integration.py \
-    --input rounds/round_01/integrated.h5ad \
-    --batch-key platform_origin \
-    --covariate-keys data_origin tech \
-    --output-dir rounds/round_01/
+python code/integrate_sns_scvi.py \
+  --config pipeline.yml \
+  --input rounds/round_02/filtered.h5ad \
+  --output-dir rounds/round_02 \
+  --skip-benchmark
 ```
 
-### Report Mode (default)
-
-Generates a diagnostic report without modifying data.
+No-config legacy usage remains supported:
 
 ```bash
-python inspect_integration.py \
-    --input integrated.h5ad \
-    --output-dir rounds/round_01/
+python code/integrate_sns_scvi.py \
+  --input data/combined_sns_adata.h5ad \
+  --output-dir rounds/round_01
+
+python code/inspect_integration.py \
+  --input rounds/round_01/integrated.h5ad \
+  --output-dir rounds/round_01
 ```
 
-**Outputs:**
+## Decisions
 
-| File | Description |
-|---|---|
-| `inspection_report.html` | Self-contained HTML with all plots and tables |
-| `cluster_qc_summary.csv` | Per-cluster: N cells, median genes/counts/%MT, batch composition, covariate dominance fractions, silhouette |
-| `auto_flags.yaml` | Template of clusters that trip automated thresholds |
-| `umap_overview.png` | 2-panel UMAP (clusters + batch) |
-| `qc_summary_heatmap.png` | Heatmap of QC metrics, red borders on flagged clusters |
-| `batch_composition.png` | Stacked bar of batch fractions per cluster |
-| `covariate_<key>_composition.png` | Stacked bar of covariate fractions per cluster (one per covariate key) |
-| `marker_dotplot.png` | Marker gene expression per cluster |
-| `cluster_silhouettes.png` | Per-cluster silhouette scores in latent space |
-| `marker_fraction_heatmap.png` | Fraction of cells expressing each marker gene per cluster |
-| `cluster_marker_pca.png` | PCA of clusters in marker-fraction space (colored by a single gene) |
-
-### Neuronal Cluster Identification
-
-The script computes a per-cluster marker expression fraction table (proportion of cells expressing each gene above a count threshold) and flags which clusters are likely neuronal:
-
-- **`calculate_percent_expressed`** — for each cluster, computes the fraction of cells with counts > threshold for every marker in the panel. Uses `layers["counts"]` if available, falls back to `.X`.
-- **`identify_neuronal_clusters`** — marks a cluster as neuronal if **any** of the neuronal marker genes (default: `Th, Snap25, Phox2b, Dbh, Chat, Slc18a2, Slc17a6`) exceeds the expression cutoff (default: 50% of cells).
-
-Neuronal cluster IDs are surfaced in:
-1. **`auto_flags.yaml`** — commented-out `keep_clusters:` block listing the suggested IDs.
-2. **`inspection_report.html`** — "Likely Neuronal Clusters" summary box and fraction table.
-3. **`marker_fraction_heatmap.png`** / **`cluster_marker_pca.png`** — visual summaries.
-
-To restrict to neurons only in the next round, copy the commented block from `auto_flags.yaml` into your `decisions.yaml`:
+`decisions.yaml` supports:
 
 ```yaml
-keep_clusters:
-  - cluster: "2"
-    reason: "Confirmed neuronal (Snap25/Th high)"
-  - cluster: "5"
-    reason: "Confirmed neuronal (Snap25/Th high)"
-```
-
-### Filter Mode (`--decisions`)
-
-Applies a `decisions.yaml` file and exports filtered data.
-
-```bash
-python inspect_integration.py \
-    --input integrated.h5ad \
-    --decisions decisions.yaml \
-    --output-dir rounds/round_02/
-```
-
-**Outputs:**
-
-| File | Description |
-|---|---|
-| `cells_to_keep.csv` | Obs names of retained cells |
-| `filtered.h5ad` | Filtered AnnData for re-integration |
-| `decisions_applied.yaml` | Provenance: what was changed, why, how many cells |
-| `round_manifest.json` | Machine-readable round summary |
-
-### Auto-flagging Thresholds
-
-| Criterion | Default | CLI flag |
-|---|---|---|
-| Median %MT | > 15% | `--mt-threshold` |
-| Median genes | < 400 | `--min-genes-threshold` |
-| Cluster size | < 20 cells | `--min-cells` |
-| Dominant batch fraction | > 90% | `--single-batch-threshold` |
-| Dominant covariate fraction | > 90% (same threshold) | `--single-batch-threshold` |
-| Median silhouette | < −0.05 | (computed from latent) |
-
-### Built-in Marker Genes
-
-Default panel covers peripheral / sympathetic neurons:
-
-- **Pan-neuronal:** Snap25, Tubb3, Rbfox3, Elavl4, Isl1
-- **Noradrenergic:** Th, Dbh, Ddc, Slc6a2
-- **Cholinergic:** Chat, Slc18a3, Slc5a7
-- **Glutamatergic:** Slc17a6, Slc17a7
-- **GABAergic:** Slc32a1, Gad1, Gad2
-- **Nitrergic:** Nos1
-- **Neuropeptides:** Npy, Sst, Vip, Pdyn
-- **Transcription factors:** Phox2b, Phox2a, Sox6, Shox2
-- **Satellite glia:** Sox10, Fabp7, S100b
-- **Immune:** Ptprc, Cd68
-- **Mitochondrial:** mt-Co1, mt-Co2, mt-Cytb
-
-Override with `--markers my_markers.json`:
-
-```json
-{
-  "My group": ["Gene1", "Gene2"],
-  "Another group": ["Gene3", "Gene4"]
-}
-```
-
-### Key arguments
-
-| Argument | Default | Description |
-|---|---|---|
-| `--input` | (required) | Path to integrated h5ad |
-| `--output-dir` | `.` | Output directory |
-| `--model-dir` | auto-search | scVI model directory; reads `batch_key` and covariate keys from `attr_dict.json` |
-| `--batch-key` | from model / `data_origin` | Obs column for batch |
-| `--covariate-keys` | from model | Additional obs columns to analyse for composition bias |
-| `--cluster-key` | auto-detect | Obs column for cluster labels (`leiden` or first `leiden_*`) |
-| `--latent-key` | auto-detect | Obsm key for silhouette computation (`X_scVI` or first `X_scVI_*`) |
-| `--umap-key` | auto-detect | Obsm key for UMAP |
-| `--markers` | built-in | JSON file with marker gene dict |
-| `--mt-threshold` | 15.0 | Max median %MT per cluster |
-| `--min-genes-threshold` | 400 | Min median genes per cluster |
-| `--min-cells` | 20 | Min cells per cluster |
-| `--single-batch-threshold` | 0.90 | Dominance threshold for batch and covariate flagging |
-| `--decisions` | None | Path to `decisions.yaml` to apply |
-| `--report` | off | Generate report even when `--decisions` is set |
-| `--neuronal-markers` | built-in list | Genes used to identify neuronal clusters (space-separated) |
-| `--neuronal-cutoff` | 0.50 | Min fraction of cells expressing a neuronal marker to call a cluster neuronal |
-| `--marker-threshold` | 0.0 | Count threshold for `calculate_percent_expressed` (cells with counts > this are "expressing") |
-| `--pca-color-gene` | `Snap25` | Gene used to color the cluster-marker PCA scatter |
-
----
-
-## `decisions.yaml` Format
-
-The `auto_flags.yaml` output is a starting template. Copy/rename it to `decisions.yaml` and edit to reflect your actual decisions.
-
-Actions are applied in this order:
-
-1. **`keep_clusters`** — whitelist: only these cluster IDs are retained; all others are excluded
-2. **`keep_cells`** — query whitelist: each query further restricts the retained set (AND-chained)
-3. **`remove_clusters`** — blacklist: drop these cluster IDs from whatever remains
-4. **`remove_cells`** — query blacklist: drop cells matching each query from whatever remains
-
-```yaml
-# Keep only confirmed neuron clusters (discard everything else)
 keep_clusters:
   - cluster: "1"
-    reason: "Confirmed noradrenergic neurons"
-  - cluster: "3"
-    reason: "Confirmed cholinergic neurons"
+    reason: "High-quality target cells"
 
-# Further restrict to cells with minimum quality within the kept clusters
 keep_cells:
-  - query: "n_genes_by_counts > 400"
-    reason: "Minimum gene complexity"
+  - query: "n_genes_by_counts > 500"
+    reason: "Minimum complexity"
 
-# Drop a low-quality cluster from the kept set
 remove_clusters:
-  - cluster: "10"
-    reasons:
-      - "MT-enriched cluster (median 23.1%)"
-  - cluster: "14"
-    reasons:
-      - "Very small, single-batch (ScaleBio 95%)"
+  - cluster: "7"
+    reason: "Low-quality cluster"
 
-# Fine-grained cell removal by query (pandas .eval syntax on .obs)
 remove_cells:
-  - query: "(tech == 'scale') & (neuron_type.isin(['GABAergic', 'Glutamatergic']))"
-    reason: "Contaminating non-noradrenergic neurons from ScaleBio"
+  - query: "scanvi_confidence < 0.5"
+    reason: "Low-confidence annotation"
 
-notes: "Round 1 cleanup — retained neuron clusters, removed dying cells and off-target neurons"
+notes: "Manual review after round 1."
 ```
 
-All four sections are optional. A decisions file with only `remove_clusters` and `remove_cells` works exactly as before. All actions are logged in `decisions_applied.yaml` and summarised in `round_manifest.json`.
+Failed decision queries are errors by default. To keep the previous permissive
+behavior, set:
 
----
+```yaml
+decisions:
+  ignore_failed_queries: true
+```
 
-## Tips
+## Outputs and Provenance
 
-- **First round: skip the sweep.** The default large architecture is a good starting point for initial QC. Run a sweep after you've cleaned the data.
-- **`--skip-qc-filter` on re-integration.** Filtering was already applied by the inspection script; don't double-filter.
-- **Model auto-detection.** As long as the scVI model directory is saved alongside the h5ad (the default), `batch_key` and covariate keys are picked up automatically. No need to repeat them on the CLI.
-- **Keep vs. remove.** Use `keep_clusters` when you want to whittle down to a confirmed subset (e.g. neurons only). Use `remove_clusters` when most clusters are good and you're dropping a few bad ones.
-- **Compare scIB scores across rounds.** The `scib_benchmark_results.csv` from each round lets you track whether filtering improved integration.
-- **Custom sweep configs.** If the built-in configs don't match your data (different batch keys, platform columns), create a JSON file and pass `--sweep-configs`.
-- **GPU.** scVI will automatically use a GPU if available. For large datasets (>50k cells), this significantly reduces sweep runtime.
+Each run writes a cumulative round record:
+
+| File | Description |
+|---|---|
+| `integrated.h5ad` | All genes, normalized/log `.X`, raw counts in configured counts layer, latent embeddings, UMAPs, clusters |
+| `run_config_resolved.yml` | Fully merged config after defaults and CLI overrides |
+| `command_args.json` | CLI arguments recorded by stage |
+| `round_manifest.json` | Cumulative integration, inspection, and decisions metadata |
+| `inspection_report.html` | Self-contained inspection report |
+| `auto_flags.yaml` | Editable starting point for filtering decisions |
+| `filtered.h5ad` | Filtered object produced by applying decisions |
+
+## Notes
+
+- V1 supports `integration.model_type: scvi`; scANVI is an annotation stage on top
+  of the single-model scVI path.
+- scANVI plus sweep mode is intentionally not supported in V1 because selecting
+  which sweep model should seed annotation needs an explicit design.
+- Existing SNS marker defaults are now part of the resolved config/template
+  rather than implicit inspection logic.

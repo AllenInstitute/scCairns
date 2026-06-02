@@ -1,0 +1,53 @@
+pipeline_version: 1
+
+data:
+  input_h5ad: data/combined_sns_adata.h5ad
+  output_dir: rounds/sweep_01
+  counts_layer: counts
+  batch_key: data_origin
+  categorical_covariate_keys: [tech]
+
+integration:
+  model_type: scvi
+  max_epochs: 200
+  early_stopping_patience: 20
+  batch_size: 256
+  hvg:
+    n_top_genes: 3000
+    batch_key: tech
+    flavor: seurat_v3
+    min_batches: null
+  sweep:
+    - name: custom2_tech
+      n_hidden: 16
+      n_layers: 2
+      n_latent: 32
+      dispersion: gene-cell
+      gene_likelihood: nb
+      batch_key: tech
+      categorical_covariate_keys: []
+      hvg_batch_key: tech
+      hvg_flavor: seurat
+      hvg_nbatches: 3
+    - name: medium_platform_cov
+      n_hidden: 128
+      n_layers: 2
+      n_latent: 32
+      dispersion: gene-cell
+      gene_likelihood: nb
+      batch_key: platform_origin
+      categorical_covariate_keys: [data_origin]
+      hvg_batch_key: platform_origin
+      hvg_flavor: seurat
+      hvg_nbatches: 3
+
+annotation:
+  enabled: false
+
+benchmark:
+  enabled: true
+  batch_key: auto
+  label_key: null
+
+decisions:
+  ignore_failed_queries: false

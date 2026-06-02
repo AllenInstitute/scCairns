@@ -40,6 +40,8 @@ RUN pip install -U --no-cache-dir \
     numpy==1.26.4 \
     pandas==2.2.3 \
     plotly==5.24.1 \
+    pytest==8.3.4 \
+    pyyaml==6.0.2 \
     requests==2.32.3 \
     scanpy==1.10.4 \
     scib-metrics==0.5.6 \
