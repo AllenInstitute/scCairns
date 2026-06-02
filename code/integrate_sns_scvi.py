@@ -32,6 +32,7 @@ Usage
 
 import argparse
 import gc
+import inspect
 import json
 import os
 from dataclasses import dataclass, field
@@ -509,6 +510,36 @@ def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
 #  scIB benchmarking
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _supported_metric_kwargs(cls, desired, aliases=None, name=None):
+    """Return kwargs supported by a scib-metrics config class signature."""
+    aliases = aliases or {}
+    label = name or getattr(cls, "__name__", "metric config")
+    sig = inspect.signature(cls)
+    params = sig.parameters
+    supports_kwargs = any(
+        p.kind == inspect.Parameter.VAR_KEYWORD
+        for p in params.values()
+    )
+
+    resolved = {}
+    skipped = []
+    for key, value in desired.items():
+        candidates = aliases.get(key, [key])
+        target = None
+        for candidate in candidates:
+            if supports_kwargs or candidate in params:
+                target = candidate
+                break
+        if target is None:
+            skipped.append(key)
+            continue
+        resolved[target] = value
+
+    if skipped:
+        print(f"  [WARN] {label} does not support: {', '.join(skipped)}")
+    return resolved
+
+
 def run_benchmarking(adata, embedding_keys, bench_batch_key,
                      bench_label_key=None, output_dir=None, n_pca_comps=50,
                      counts_layer="counts"):
@@ -561,18 +592,33 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
 
     # Metric configuration
     bio = BioConservation(
-        isolated_labels=False,
-        silhouette_label=use_bio,
-        clisi_knn=use_bio,
-        nmi_ari_cluster_labels_kmeans=False,
-        nmi_ari_cluster_labels_leiden=False,
+        **_supported_metric_kwargs(
+            BioConservation,
+            {
+                "isolated_labels": False,
+                "silhouette_label": use_bio,
+                "clisi_knn": use_bio,
+                "nmi_ari_cluster_labels_kmeans": False,
+                "nmi_ari_cluster_labels_leiden": False,
+            },
+            name="BioConservation",
+        )
     )
     batch = BatchCorrection(
-        silhouette_batch=True,
-        graph_connectivity=True,
-        pcr_comparison=True,
-        ilisi_knn=False,
-        kbet_per_label=False,
+        **_supported_metric_kwargs(
+            BatchCorrection,
+            {
+                # scib-metrics <=0.5.1 used silhouette_batch; newer versions
+                # use BRAS for the batch-silhouette-style metric.
+                "batch_silhouette": True,
+                "graph_connectivity": True,
+                "pcr_comparison": True,
+                "ilisi_knn": False,
+                "kbet_per_label": False,
+            },
+            aliases={"batch_silhouette": ["silhouette_batch", "bras"]},
+            name="BatchCorrection",
+        )
     )
 
     bm = Benchmarker(
