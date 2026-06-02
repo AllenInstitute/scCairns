@@ -90,6 +90,7 @@ integration:
   max_epochs: 200
   early_stopping_patience: 20
   batch_size: 256
+  num_workers: 4
   hvg:
     n_top_genes: 3000
     batch_key: tech

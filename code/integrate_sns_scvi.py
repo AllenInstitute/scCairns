@@ -270,9 +270,26 @@ def clean_batch_column(adata, col):
     adata.obs[col] = adata.obs[col].fillna("other")
 
 
+def train_with_num_workers(model, train_kwargs, num_workers=None):
+    """Train with scvi-tools-version-compatible DataLoader worker kwargs."""
+    if num_workers is None:
+        model.train(**train_kwargs)
+        return
+
+    for kw_name in ("datasplitter_kwargs", "datamodule_kwargs"):
+        try:
+            model.train(**train_kwargs, **{kw_name: {"num_workers": num_workers}})
+            return
+        except TypeError:
+            continue
+
+    print("  [WARN] Could not set num_workers, training with default.")
+    model.train(**train_kwargs)
+
+
 def setup_and_train(adata_hvg, config, max_epochs=200,
                     early_stopping_patience=20, batch_size=256,
-                    output_dir=None):
+                    num_workers=None, output_dir=None):
     """Setup AnnData, build, and train one scVI model. Returns the model."""
     clean_batch_column(adata_hvg, config.batch_key)
 
@@ -306,15 +323,16 @@ def setup_and_train(adata_hvg, config, max_epochs=200,
     print(f"  batch_key='{config.batch_key}', categorical_covariates={cat_covs or 'none'}")
     print(f"  continuous_covariates={cont_covs or 'none'}")
 
-    model.train(
+    train_kwargs = dict(
         max_epochs=max_epochs,
         batch_size=batch_size,
+        train_size=0.9,
         early_stopping=True,
         early_stopping_patience=early_stopping_patience,
         early_stopping_monitor="elbo_validation",
         check_val_every_n_epoch=1,
-        train_size=0.9,
     )
+    train_with_num_workers(model, train_kwargs, num_workers=num_workers)
 
     n_epochs = len(model.history["elbo_train"])
     final_val = model.history["elbo_validation"].iloc[-1]
@@ -447,6 +465,44 @@ def plot_single_umaps(adata, output_dir, basis="X_umap", output_name="umap_integ
                 dpi=150, bbox_inches="tight")
     plt.close(fig)
     print(f"  Saved {output_name}")
+
+
+def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
+    """Run UMAP with a requested obsm key across Scanpy versions.
+
+    Newer Scanpy versions support sc.tl.umap(..., key_added=...). Some older
+    versions always write obsm["X_umap"]. This wrapper tries key_added first,
+    then falls back to copying/restoring X_umap so multiple embeddings can
+    coexist safely.
+    """
+    try:
+        sc.tl.umap(
+            adata,
+            neighbors_key=neighbors_key,
+            key_added=umap_key,
+            spread=spread,
+            min_dist=min_dist,
+        )
+        return
+    except TypeError as e:
+        if "key_added" not in str(e):
+            raise
+        print("  [WARN] sc.tl.umap does not support key_added; using fallback.")
+
+    prior_x_umap = adata.obsm["X_umap"].copy() if "X_umap" in adata.obsm else None
+    sc.tl.umap(
+        adata,
+        neighbors_key=neighbors_key,
+        spread=spread,
+        min_dist=min_dist,
+    )
+
+    if umap_key != "X_umap":
+        adata.obsm[umap_key] = adata.obsm["X_umap"].copy()
+        if prior_x_umap is not None:
+            adata.obsm["X_umap"] = prior_x_umap
+        else:
+            del adata.obsm["X_umap"]
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -582,6 +638,7 @@ def apply_integration_cli_overrides(config, args):
         args.early_stopping_patience,
     )
     set_if_provided(config, ["integration", "batch_size"], args.batch_size)
+    set_if_provided(config, ["integration", "num_workers"], args.num_workers)
     set_if_provided(config, ["integration", "hvg", "n_top_genes"], args.n_hvgs)
     set_if_provided(config, ["integration", "hvg", "batch_key"], args.hvg_batch_key)
     set_if_provided(config, ["integration", "hvg", "flavor"], args.hvg_flavor)
@@ -690,14 +747,19 @@ def train_scanvi_from_scvi(model, adata_hvg, adata_full, config, output_dir):
         labels_key=labels_key,
         unlabeled_category=unlabeled,
     )
-    scanvi_model.train(
+    train_kwargs = dict(
         max_epochs=config["integration"]["max_epochs"],
         batch_size=config["integration"]["batch_size"],
+        train_size=0.9,
         early_stopping=True,
         early_stopping_patience=config["integration"]["early_stopping_patience"],
         early_stopping_monitor="elbo_validation",
         check_val_every_n_epoch=1,
-        train_size=0.9,
+    )
+    train_with_num_workers(
+        scanvi_model,
+        train_kwargs,
+        num_workers=config["integration"].get("num_workers"),
     )
 
     latent = scanvi_model.get_latent_representation()
@@ -828,6 +890,8 @@ Sweep config JSON format:
     tr.add_argument("--max-epochs", type=int, default=None)
     tr.add_argument("--early-stopping-patience", type=int, default=None)
     tr.add_argument("--batch-size", type=int, default=None)
+    tr.add_argument("--num-workers", type=int, default=None,
+                    help="DataLoader workers for scVI/scANVI training.")
 
     # ── Sweep ──
     sw = parser.add_argument_group("parameter sweep")
@@ -963,6 +1027,7 @@ Sweep config JSON format:
                 max_epochs=integration_cfg["max_epochs"],
                 early_stopping_patience=integration_cfg["early_stopping_patience"],
                 batch_size=integration_cfg["batch_size"],
+                num_workers=integration_cfg.get("num_workers"),
                 output_dir=output_dir,
             )
 
@@ -1019,6 +1084,7 @@ Sweep config JSON format:
             max_epochs=integration_cfg["max_epochs"],
             early_stopping_patience=integration_cfg["early_stopping_patience"],
             batch_size=integration_cfg["batch_size"],
+            num_workers=integration_cfg.get("num_workers"),
             output_dir=output_dir,
         )
 
@@ -1081,11 +1147,13 @@ Sweep config JSON format:
                         n_neighbors=embedding_cfg["n_neighbors"],
                         n_pcs=n_latent,
                         key_added=nbr_key)
-        sc.tl.umap(adata_full,
-                    neighbors_key=nbr_key,
-                    key_added=umap_key,
-                    spread=embedding_cfg["umap_spread"],
-                    min_dist=embedding_cfg["umap_min_dist"])
+        run_umap_with_key(
+            adata_full,
+            neighbors_key=nbr_key,
+            umap_key=umap_key,
+            spread=embedding_cfg["umap_spread"],
+            min_dist=embedding_cfg["umap_min_dist"],
+        )
         sc.tl.leiden(adata_full,
                      neighbors_key=nbr_key,
                      resolution=embedding_cfg["leiden_resolution"],
