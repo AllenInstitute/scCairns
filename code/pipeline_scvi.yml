@@ -26,6 +26,7 @@ integration:
   n_hidden: 256
   n_layers: 3
   n_latent: 32
+  num_workers: 15
   dispersion: gene-cell
   gene_likelihood: nb
   max_epochs: 200
