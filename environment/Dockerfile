@@ -46,6 +46,7 @@ RUN pip install -U --no-cache-dir \
     scanpy==1.10.4 \
     scib-metrics==0.5.6 \
     scikit-learn==1.5.2 \
+    scikit-misc \
     scipy==1.14.1 \
     scvi-tools[cuda]==1.3.3 \
     seaborn==0.13.2

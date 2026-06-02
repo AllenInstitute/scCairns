@@ -1,7 +1,7 @@
 pipeline_version: 1
 
 data:
-  input_h5ad: ../data/sns_all_int_260523/scvi_large_Whole_Ganglia_20260413_hvgs/adata.h5ad
+  input_h5ad: /root/capsule/data/sns_all_int_260513/scvi_large_Whole_Ganglia_20260513_hvgs/adata.h5ad
   output_dir: rounds/round_01
   counts_layer: counts
   batch_key: data_origin
