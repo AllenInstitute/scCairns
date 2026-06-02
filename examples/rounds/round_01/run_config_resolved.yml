@@ -1,0 +1,129 @@
+pipeline_version: 1
+data:
+  input_h5ad: /root/capsule/examples/data/combined_sns_adata.h5ad
+  output_dir: /root/capsule/examples/rounds/round_01
+  counts_layer: counts
+  batch_key: data_origin
+  categorical_covariate_keys:
+  - tech
+  continuous_covariate_keys: []
+  sample_key: null
+  technology_key: tech
+  species: mouse
+  gene_symbol_case: preserve
+qc:
+  enabled: true
+  min_genes: 500
+  min_cells: 3
+  mt_gene_patterns:
+  - mt-
+  ribo_gene_patterns:
+  - rps
+  - rpl
+  hb_gene_pattern: ^hb[^(p)]
+  skip_filter_after_round_1: true
+  skip_filter: false
+integration:
+  model_type: scvi
+  n_hidden: 256
+  n_layers: 3
+  n_latent: 32
+  dispersion: gene-cell
+  gene_likelihood: nb
+  max_epochs: 200
+  early_stopping_patience: 20
+  batch_size: 256
+  hvg:
+    n_top_genes: 3000
+    batch_key: tech
+    flavor: seurat_v3
+    min_batches: null
+  sweep: []
+annotation:
+  enabled: false
+  method: scanvi
+  labels_key: null
+  unlabeled_category: Unknown
+  prediction_key: scanvi_label
+  confidence_key: scanvi_confidence
+  min_confidence: 0.5
+embedding:
+  n_neighbors: 30
+  umap_min_dist: 0.4
+  umap_spread: 3.0
+  leiden_resolution: 0.3
+inspection:
+  cluster_key: auto
+  latent_key: auto
+  umap_key: auto
+  markers_json: null
+  marker_sets:
+    Pan-neuronal:
+    - Snap25
+    - Tubb3
+    - Rbfox3
+    - Elavl4
+    - Isl1
+    Noradrenergic:
+    - Th
+    - Dbh
+    - Ddc
+    - Slc6a2
+    Cholinergic:
+    - Chat
+    - Slc18a3
+    - Slc5a7
+    Glutamatergic:
+    - Slc17a6
+    - Slc17a7
+    GABAergic:
+    - Slc32a1
+    - Gad1
+    - Gad2
+    Nitrergic:
+    - Nos1
+    Neuropeptides:
+    - Npy
+    - Sst
+    - Vip
+    - Pdyn
+    - Chga
+    Transcription:
+    - Phox2b
+    - Phox2a
+    - Sox6
+    - Shox2
+    Satellite glia:
+    - Sox10
+    - Fabp7
+    - S100b
+    Immune:
+    - Ptprc
+    - Cd68
+    Mitochondrial:
+    - mt-Co1
+    - mt-Co2
+    - mt-Cytb
+  neuronal_markers:
+  - Th
+  - Snap25
+  - Phox2b
+  - Dbh
+  - Chat
+  - Slc18a2
+  - Slc17a6
+  neuronal_cutoff: 0.5
+  marker_threshold: 0.0
+  pca_color_gene: Snap25
+  auto_flag:
+    mt_threshold: 15.0
+    min_genes_threshold: 400
+    min_cells: 20
+    single_batch_threshold: 0.9
+    silhouette_threshold: -0.05
+benchmark:
+  enabled: true
+  batch_key: auto
+  label_key: null
+decisions:
+  ignore_failed_queries: false
