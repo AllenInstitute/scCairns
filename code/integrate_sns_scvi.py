@@ -468,6 +468,51 @@ def plot_single_umaps(adata, output_dir, basis="X_umap", output_name="umap_integ
     print(f"  Saved {output_name}")
 
 
+_MISSING = object()
+
+
+def _resolve_neighbor_graph_keys(adata, neighbors_key):
+    """Return obsp keys backing a Scanpy neighbors graph."""
+    neighbors = adata.uns.get(neighbors_key, {})
+    if not isinstance(neighbors, dict):
+        neighbors = {}
+
+    connectivities_key = neighbors.get("connectivities_key")
+    distances_key = neighbors.get("distances_key")
+
+    if not connectivities_key:
+        candidates = ["connectivities"] if neighbors_key == "neighbors" else []
+        candidates.append(f"{neighbors_key}_connectivities")
+        connectivities_key = next(
+            (key for key in candidates if key in adata.obsp),
+            candidates[0],
+        )
+
+    if not distances_key:
+        candidates = ["distances"] if neighbors_key == "neighbors" else []
+        candidates.append(f"{neighbors_key}_distances")
+        distances_key = next(
+            (key for key in candidates if key in adata.obsp),
+            candidates[0],
+        )
+
+    if connectivities_key not in adata.obsp:
+        raise KeyError(
+            f'No "{connectivities_key}" in .obsp for neighbors_key='
+            f'"{neighbors_key}"'
+        )
+
+    return connectivities_key, distances_key
+
+
+def _restore_mapping_key(mapping, key, prior_value):
+    if prior_value is _MISSING:
+        if key in mapping:
+            del mapping[key]
+    else:
+        mapping[key] = prior_value
+
+
 def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
     """Run UMAP with a requested obsm key across Scanpy versions.
 
@@ -486,17 +531,57 @@ def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
         )
         return
     except TypeError as e:
-        if "key_added" not in str(e):
+        unsupported_args = [
+            arg for arg in ("key_added", "neighbors_key") if arg in str(e)
+        ]
+        if not unsupported_args:
             raise
-        print("  [WARN] sc.tl.umap does not support key_added; using fallback.")
+        print(
+            "  [WARN] sc.tl.umap does not support "
+            f"{', '.join(unsupported_args)}; using fallback."
+        )
+    except KeyError as e:
+        if "connectivities" not in str(e) and "distances" not in str(e):
+            raise
+        print(
+            "  [WARN] sc.tl.umap could not resolve the requested neighbors "
+            "graph; using fallback."
+        )
 
     prior_x_umap = adata.obsm["X_umap"].copy() if "X_umap" in adata.obsm else None
-    sc.tl.umap(
-        adata,
-        neighbors_key=neighbors_key,
-        spread=spread,
-        min_dist=min_dist,
+    prior_neighbors = adata.uns["neighbors"] if "neighbors" in adata.uns else _MISSING
+    prior_connectivities = (
+        adata.obsp["connectivities"] if "connectivities" in adata.obsp else _MISSING
     )
+    prior_distances = (
+        adata.obsp["distances"] if "distances" in adata.obsp else _MISSING
+    )
+
+    connectivities_key, distances_key = _resolve_neighbor_graph_keys(
+        adata, neighbors_key
+    )
+    source_neighbors = adata.uns.get(neighbors_key, {})
+    legacy_neighbors = (
+        dict(source_neighbors) if isinstance(source_neighbors, dict) else {}
+    )
+    legacy_neighbors["connectivities_key"] = "connectivities"
+
+    try:
+        adata.obsp["connectivities"] = adata.obsp[connectivities_key]
+        if distances_key in adata.obsp:
+            adata.obsp["distances"] = adata.obsp[distances_key]
+            legacy_neighbors["distances_key"] = "distances"
+        adata.uns["neighbors"] = legacy_neighbors
+
+        sc.tl.umap(
+            adata,
+            spread=spread,
+            min_dist=min_dist,
+        )
+    finally:
+        _restore_mapping_key(adata.uns, "neighbors", prior_neighbors)
+        _restore_mapping_key(adata.obsp, "connectivities", prior_connectivities)
+        _restore_mapping_key(adata.obsp, "distances", prior_distances)
 
     if umap_key != "X_umap":
         adata.obsm[umap_key] = adata.obsm["X_umap"].copy()
