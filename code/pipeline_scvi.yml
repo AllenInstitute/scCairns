@@ -4,8 +4,8 @@ data:
   input_h5ad: /root/capsule/data/260603_CMG_untreated_unint/cmg_untreated_260603.h5ad
   output_dir: /root/capsule/results/rounds/round_01
   counts_layer: counts
-  batch_key: data_origin
-  categorical_covariate_keys: [tech]
+  batch_key: tech
+  categorical_covariate_keys: []
   continuous_covariate_keys: []
   sample_key: null
   technology_key: tech
