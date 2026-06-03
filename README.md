@@ -54,6 +54,37 @@ python code/inspect_integration.py \
 For the next round, update `data.input_h5ad` to `rounds/round_02/filtered.h5ad`
 and set `data.output_dir` to `rounds/round_02`, then re-run integration.
 
+## Local Test Environment
+
+For local integrated testing, use a Python 3.10 conda/mamba environment and the
+repo-level `requirements.txt`. The requirements file mirrors the package pins in
+`environment/Dockerfile` where practical, but uses CPU/Mac-friendly
+`scvi-tools==1.3.3` instead of the Docker image's CUDA extra.
+
+```bash
+mamba create -n scvi-loops -c conda-forge python=3.10 pip scikit-misc -y
+mamba activate scvi-loops
+python -m pip install -U pip
+python -m pip install -r requirements.txt
+```
+
+Run the lightweight checks:
+
+```bash
+python -m compileall -q code tests
+python -m pytest -q
+```
+
+Run an integration pass with your edited config:
+
+```bash
+python code/integrate_sns_scvi.py --config pipeline.yml
+```
+
+Use the Docker environment for exact CUDA/container parity; the conda
+environment is intended for local regression testing and reproducing Scanpy API
+compatibility issues.
+
 ## Config Schema
 
 Minimal scVI-only config:
