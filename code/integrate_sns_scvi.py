@@ -513,6 +513,69 @@ def _restore_mapping_key(mapping, key, prior_value):
         mapping[key] = prior_value
 
 
+def _normalise_neighbor_graph_metadata(adata, neighbors_key):
+    """Ensure a named neighbors graph records its backing obsp keys."""
+    connectivities_key, distances_key = _resolve_neighbor_graph_keys(
+        adata, neighbors_key
+    )
+    neighbors = adata.uns.get(neighbors_key, {})
+    neighbors = dict(neighbors) if isinstance(neighbors, dict) else {}
+    neighbors["connectivities_key"] = connectivities_key
+    if distances_key in adata.obsp:
+        neighbors["distances_key"] = distances_key
+    adata.uns[neighbors_key] = neighbors
+
+
+def run_neighbors_with_key(adata, neighbors_key, **kwargs):
+    """Run neighbors and keep named graph metadata consistent across versions."""
+    try:
+        sc.pp.neighbors(adata, key_added=neighbors_key, **kwargs)
+        _normalise_neighbor_graph_metadata(adata, neighbors_key)
+        return
+    except TypeError as e:
+        if "key_added" not in str(e):
+            raise
+        print(
+            "  [WARN] sc.pp.neighbors does not support key_added; "
+            "using fallback."
+        )
+
+    prior_neighbors = adata.uns["neighbors"] if "neighbors" in adata.uns else _MISSING
+    prior_connectivities = (
+        adata.obsp["connectivities"] if "connectivities" in adata.obsp else _MISSING
+    )
+    prior_distances = (
+        adata.obsp["distances"] if "distances" in adata.obsp else _MISSING
+    )
+
+    sc.pp.neighbors(adata, **kwargs)
+    _normalise_neighbor_graph_metadata(adata, "neighbors")
+
+    if neighbors_key == "neighbors":
+        return
+
+    connectivities_key, distances_key = _resolve_neighbor_graph_keys(
+        adata, "neighbors"
+    )
+    target_connectivities_key = f"{neighbors_key}_connectivities"
+    target_distances_key = f"{neighbors_key}_distances"
+    source_neighbors = adata.uns.get("neighbors", {})
+    target_neighbors = (
+        dict(source_neighbors) if isinstance(source_neighbors, dict) else {}
+    )
+    target_neighbors["connectivities_key"] = target_connectivities_key
+
+    adata.obsp[target_connectivities_key] = adata.obsp[connectivities_key]
+    if distances_key in adata.obsp:
+        adata.obsp[target_distances_key] = adata.obsp[distances_key]
+        target_neighbors["distances_key"] = target_distances_key
+    adata.uns[neighbors_key] = target_neighbors
+
+    _restore_mapping_key(adata.uns, "neighbors", prior_neighbors)
+    _restore_mapping_key(adata.obsp, "connectivities", prior_connectivities)
+    _restore_mapping_key(adata.obsp, "distances", prior_distances)
+
+
 def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
     """Run UMAP with a requested obsm key across Scanpy versions.
 
@@ -591,6 +654,88 @@ def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
             del adata.obsm["X_umap"]
 
 
+def _call_leiden(adata, leiden_key, resolution=1.0, flavor="igraph", **graph_kwargs):
+    """Call sc.tl.leiden while tolerating older optional kwargs."""
+    kwargs = dict(graph_kwargs)
+    kwargs["resolution"] = resolution
+    kwargs["key_added"] = leiden_key
+    if flavor is not None:
+        kwargs["flavor"] = flavor
+
+    copy_default_key = False
+    prior_leiden = _MISSING
+    while True:
+        try:
+            sc.tl.leiden(adata, **kwargs)
+            break
+        except TypeError as e:
+            message = str(e)
+            if "flavor" in message and "flavor" in kwargs:
+                print("  [WARN] sc.tl.leiden does not support flavor; omitting it.")
+                del kwargs["flavor"]
+                continue
+            if "key_added" in message and "key_added" in kwargs:
+                print(
+                    "  [WARN] sc.tl.leiden does not support key_added; "
+                    "using fallback."
+                )
+                prior_leiden = (
+                    adata.obs["leiden"].copy()
+                    if "leiden" in adata.obs.columns
+                    else _MISSING
+                )
+                del kwargs["key_added"]
+                copy_default_key = leiden_key != "leiden"
+                continue
+            raise
+
+    if copy_default_key:
+        adata.obs[leiden_key] = adata.obs["leiden"].copy()
+        _restore_mapping_key(adata.obs, "leiden", prior_leiden)
+
+
+def run_leiden_with_key(
+    adata,
+    neighbors_key,
+    leiden_key,
+    resolution=1.0,
+    flavor="igraph",
+):
+    """Run Leiden using a named neighbors graph across Scanpy versions."""
+    try:
+        _call_leiden(
+            adata,
+            neighbors_key=neighbors_key,
+            resolution=resolution,
+            flavor=flavor,
+            leiden_key=leiden_key,
+        )
+        return
+    except (KeyError, TypeError, ValueError) as e:
+        message = str(e)
+        graph_error = (
+            "pp.neighbors" in message
+            or "neighborhood graph" in message
+            or "connectivities" in message
+            or "neighbors_key" in message
+        )
+        if not graph_error:
+            raise
+        print(
+            "  [WARN] sc.tl.leiden could not resolve the requested neighbors "
+            "graph; using adjacency fallback."
+        )
+
+    connectivities_key, _ = _resolve_neighbor_graph_keys(adata, neighbors_key)
+    _call_leiden(
+        adata,
+        adjacency=adata.obsp[connectivities_key],
+        resolution=resolution,
+        flavor=flavor,
+        leiden_key=leiden_key,
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  scIB benchmarking
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -667,9 +812,14 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
                   f"leiden proxy.")
         # Generate a proxy so the Benchmarker constructor doesn't error
         if "leiden_proxy" not in adata.obs.columns:
-            sc.pp.neighbors(adata, use_rep="X_pca", key_added="_proxy_neighbors")
-            sc.tl.leiden(adata, neighbors_key="_proxy_neighbors", resolution=0.5,
-                         flavor="igraph", key_added="leiden_proxy")
+            run_neighbors_with_key(adata, "_proxy_neighbors", use_rep="X_pca")
+            run_leiden_with_key(
+                adata,
+                neighbors_key="_proxy_neighbors",
+                leiden_key="leiden_proxy",
+                resolution=0.5,
+                flavor="igraph",
+            )
         label_key = "leiden_proxy"
         use_bio = False
         print(f"  No annotation label — using '{label_key}' as proxy "
@@ -1284,10 +1434,13 @@ Sweep config JSON format:
         print(f"  {name}: neighbors (n={embedding_cfg['n_neighbors']}) -> UMAP -> "
               f"leiden (res={embedding_cfg['leiden_resolution']})")
 
-        sc.pp.neighbors(adata_full, use_rep=latent_key,
-                        n_neighbors=embedding_cfg["n_neighbors"],
-                        n_pcs=n_latent,
-                        key_added=nbr_key)
+        run_neighbors_with_key(
+            adata_full,
+            nbr_key,
+            use_rep=latent_key,
+            n_neighbors=embedding_cfg["n_neighbors"],
+            n_pcs=n_latent,
+        )
         run_umap_with_key(
             adata_full,
             neighbors_key=nbr_key,
@@ -1295,11 +1448,13 @@ Sweep config JSON format:
             spread=embedding_cfg["umap_spread"],
             min_dist=embedding_cfg["umap_min_dist"],
         )
-        sc.tl.leiden(adata_full,
-                     neighbors_key=nbr_key,
-                     resolution=embedding_cfg["leiden_resolution"],
-                     flavor="igraph",
-                     key_added=leiden_key)
+        run_leiden_with_key(
+            adata_full,
+            neighbors_key=nbr_key,
+            leiden_key=leiden_key,
+            resolution=embedding_cfg["leiden_resolution"],
+            flavor="igraph",
+        )
 
         umap_keys[name] = umap_key
         leiden_keys[name] = leiden_key
