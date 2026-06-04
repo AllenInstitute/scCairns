@@ -13,7 +13,7 @@ set -ex
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
   --input /root/capsule/data/260603_cmg_round1/integrated.h5ad \
-  --decisions /root/capsule/data/roun1_decisions.yaml \
+  --decisions /root/capsule/data/round1_decisions.yaml \
   --output-dir /root/capsule/results/rounds/round_02
 
 python -u ./integrate_sns_scvi.py \
