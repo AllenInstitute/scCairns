@@ -183,15 +183,33 @@ DEFAULT_NEURONAL_MARKERS = [
 #  Cluster QC summary
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _median_silhouette_by_cluster(adata, obs, cluster_key, obsm_key):
+    """Return median silhouette per cluster for an embedding, if valid."""
+    if not obsm_key or obsm_key not in adata.obsm:
+        return None
+
+    labels = obs[cluster_key].values
+    n_labels = obs[cluster_key].nunique()
+    if n_labels < 2 or n_labels >= adata.n_obs:
+        return None
+
+    from sklearn.metrics import silhouette_samples
+    sil = silhouette_samples(adata.obsm[obsm_key], labels, metric="euclidean")
+    sil_col = f"_sil_{obsm_key}"
+    obs[sil_col] = sil
+    return obs.groupby(cluster_key, observed=False)[sil_col].median()
+
+
 def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
-                        latent_key=None, covariate_keys=None):
+                        latent_key=None, umap_key=None, covariate_keys=None):
     """Compute per-cluster QC statistics.
 
     Returns a DataFrame with one row per cluster, columns:
         n_cells, median_genes, median_counts, median_pct_mt,
         n_batches, dominant_batch, dominant_batch_frac,
         dominant_{cov}_frac  (for each key in covariate_keys),
-        silhouette (if latent_key provided)
+        silhouette_latent (if latent_key provided),
+        silhouette_umap (if umap_key provided)
     """
     obs = adata.obs.copy()
     clusters = sorted(obs[cluster_key].unique(),
@@ -228,15 +246,17 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
 
     df = pd.DataFrame(rows).set_index("cluster")
 
-    # Silhouette per cluster (if latent space available)
-    if latent_key and latent_key in adata.obsm:
-        from sklearn.metrics import silhouette_samples
-        X = adata.obsm[latent_key]
-        labels = obs[cluster_key].values
-        sil = silhouette_samples(X, labels, metric="euclidean")
-        obs["_sil"] = sil
-        sil_median = obs.groupby(cluster_key)["_sil"].median()
-        df["silhouette"] = df.index.map(sil_median)
+    sil_latent = _median_silhouette_by_cluster(
+        adata, obs, cluster_key, latent_key
+    )
+    if sil_latent is not None:
+        df["silhouette_latent"] = df.index.map(sil_latent)
+
+    sil_umap = _median_silhouette_by_cluster(
+        adata, obs, cluster_key, umap_key
+    )
+    if sil_umap is not None:
+        df["silhouette_umap"] = df.index.map(sil_umap)
 
     return df
 
@@ -286,10 +306,11 @@ def auto_flag_clusters(summary_df, mt_threshold=15.0, min_genes_threshold=400,
                     f"Single-covariate dominated ({cov_key}: "
                     f"{row[col]:.0%} > {single_batch_threshold:.0%})")
 
-        if ("silhouette" in row
-                and row["silhouette"] < silhouette_threshold):
+        if ("silhouette_latent" in row
+                and row["silhouette_latent"] < silhouette_threshold):
             reasons.append(
-                f"Poor separation (silhouette {row['silhouette']:.3f} "
+                f"Poor latent separation "
+                f"(silhouette {row['silhouette_latent']:.3f} "
                 f"< {silhouette_threshold})")
 
         if reasons:
@@ -383,7 +404,7 @@ def _fmt_annot(value, col_name):
         return str(int(value))
     if col_name in ("median_genes", "median_counts"):
         return f"{int(value):,}"
-    if col_name == "silhouette":
+    if col_name.startswith("silhouette"):
         return f"{value:.3f}"
     if col_name.endswith("_frac"):
         return f"{value:.2f}"
@@ -395,7 +416,8 @@ def plot_qc_summary_heatmap(summary_df, flags, output_dir):
     cols = [c for c in ["n_cells", "median_genes", "median_counts",
                          "median_pct_mt", "median_pct_ribo",
                          "median_pct_hb", "n_batches",
-                         "dominant_batch_frac", "silhouette"]
+                         "dominant_batch_frac", "silhouette_latent",
+                         "silhouette_umap"]
             if c in summary_df.columns]
 
     plot_df = summary_df[cols].copy()
@@ -521,26 +543,32 @@ def plot_marker_dotplot(adata, cluster_key, marker_dict, output_dir):
 
 def plot_cluster_silhouettes(summary_df, output_dir):
     """Bar chart of median silhouette score per cluster."""
-    if "silhouette" not in summary_df.columns:
+    metrics = [
+        ("silhouette_latent", "Latent", "#4477AA"),
+        ("silhouette_umap", "UMAP", "#EE7733"),
+    ]
+    metrics = [m for m in metrics if m[0] in summary_df.columns]
+    if not metrics:
         return None
 
     clusters = summary_df.index.tolist()
-    sil = summary_df["silhouette"].values
-
-    colors = ["#CC3311" if s < 0 else "#EE8833" if s < 0.1 else "#4477AA"
-              for s in sil]
-
     fig, ax = plt.subplots(figsize=(max(8, len(clusters) * 0.5), 4))
-    ax.bar(range(len(clusters)), sil, color=colors, edgecolor="black",
-           linewidth=0.5)
-    ax.set_xticks(range(len(clusters)))
+
+    x = np.arange(len(clusters))
+    width = 0.8 / len(metrics)
+    for i, (col, label, color) in enumerate(metrics):
+        offset = (i - (len(metrics) - 1) / 2) * width
+        ax.bar(x + offset, summary_df[col].values, width=width,
+               label=label, color=color, edgecolor="black", linewidth=0.5)
+
+    ax.set_xticks(x)
     ax.set_xticklabels(clusters, fontsize=8)
     ax.axhline(0, color="black", linewidth=0.8)
     ax.axhline(0.1, color="grey", linestyle="--", linewidth=0.8,
                label="0.1 threshold")
     ax.set_xlabel("Cluster")
     ax.set_ylabel("Median silhouette score")
-    ax.set_title("Cluster separation in latent space")
+    ax.set_title("Cluster separation by embedding space")
     ax.legend(fontsize=8)
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "cluster_silhouettes.png"),
@@ -1133,8 +1161,90 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
 #  Apply decisions
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def apply_decisions(adata, decisions, cluster_key="leiden", output_dir=".",
-                    ignore_failed_queries=False):
+def _retention_row(grouping, cluster, batch, n_pre, n_post):
+    n_removed = n_pre - n_post
+    return {
+        "grouping": grouping,
+        "cluster": cluster,
+        "batch": batch,
+        "pre_filter_cells": int(n_pre),
+        "post_filter_cells": int(n_post),
+        "removed_cells": int(n_removed),
+        "retention_fraction": n_post / n_pre if n_pre else np.nan,
+        "removal_fraction": n_removed / n_pre if n_pre else np.nan,
+    }
+
+
+def build_filtering_retention_summary(adata, keep, cluster_key=None,
+                                      batch_key=None):
+    """Summarize pre/post filtering counts for traceable round reports."""
+    keep = pd.Series(keep, index=adata.obs_names).astype(bool)
+    rows = [
+        _retention_row(
+            "overall",
+            "all",
+            "all",
+            adata.n_obs,
+            int(keep.sum()),
+        )
+    ]
+
+    obs = pd.DataFrame({"_retained": keep}, index=adata.obs_names)
+    if cluster_key and cluster_key in adata.obs.columns:
+        obs["_cluster"] = adata.obs[cluster_key].astype(str).values
+        for cluster, group in obs.groupby("_cluster", sort=True, observed=False):
+            rows.append(
+                _retention_row(
+                    "cluster",
+                    cluster,
+                    "all",
+                    len(group),
+                    int(group["_retained"].sum()),
+                )
+            )
+
+    if batch_key and batch_key in adata.obs.columns:
+        obs["_batch"] = adata.obs[batch_key].astype(str).values
+        for batch, group in obs.groupby("_batch", sort=True, observed=False):
+            rows.append(
+                _retention_row(
+                    "batch",
+                    "all",
+                    batch,
+                    len(group),
+                    int(group["_retained"].sum()),
+                )
+            )
+
+    if "_cluster" in obs.columns and "_batch" in obs.columns:
+        grouped = obs.groupby(["_cluster", "_batch"], sort=True, observed=False)
+        for (cluster, batch), group in grouped:
+            rows.append(
+                _retention_row(
+                    "cluster_batch",
+                    cluster,
+                    batch,
+                    len(group),
+                    int(group["_retained"].sum()),
+                )
+            )
+
+    return pd.DataFrame(rows)
+
+
+def write_filtering_retention_summary(adata, keep, output_dir, cluster_key=None,
+                                      batch_key=None):
+    summary = build_filtering_retention_summary(
+        adata, keep, cluster_key=cluster_key, batch_key=batch_key
+    )
+    output_path = os.path.join(output_dir, "filtering_retention_summary.csv")
+    summary.to_csv(output_path, index=False)
+    print(f"  Saved {output_path}")
+    return output_path
+
+
+def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
+                    output_dir=".", ignore_failed_queries=False):
     """Apply a decisions dict to filter an AnnData.
 
     Order of operations:
@@ -1145,6 +1255,7 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir=".",
 
     Writes:
       - cells_to_keep.csv
+      - filtering_retention_summary.csv
       - filtered.h5ad
       - decisions_applied.yaml
       - round_manifest.json
@@ -1239,6 +1350,10 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir=".",
     print(f"\n  Summary: {n_before:,} → {n_after:,} cells "
           f"({n_total_removed:,} removed, {n_total_removed/n_before:.1%})")
 
+    retention_path = write_filtering_retention_summary(
+        adata, keep, output_dir, cluster_key=cluster_key, batch_key=batch_key
+    )
+
     # Export cells to keep
     kept_names = adata.obs_names[keep].tolist()
     cells_path = os.path.join(output_dir, "cells_to_keep.csv")
@@ -1304,6 +1419,7 @@ def apply_decisions(adata, decisions, cluster_key="leiden", output_dir=".",
         "output_files": {
             "filtered_h5ad": "filtered.h5ad",
             "cells_to_keep": "cells_to_keep.csv",
+            "filtering_retention_summary": os.path.basename(retention_path),
         },
     }
     manifest_path = update_round_manifest(output_dir, "decisions", manifest)
@@ -1371,8 +1487,8 @@ Typical iterative cycle:
                              "Auto-searched as scvi_model_* near the input "
                              "h5ad if omitted.")
     parser.add_argument("--latent-key", default=None,
-                        help="Obsm key for latent space, used for silhouette "
-                             "(default: auto-detect 'X_scVI' or first "
+                        help="Obsm key for latent space, used for latent "
+                             "silhouette (default: auto-detect 'X_scVI' or first "
                              "'X_scVI_*').")
     parser.add_argument("--umap-key", default=None,
                         help="Obsm key for UMAP (default: auto-detect).")
@@ -1556,7 +1672,8 @@ Typical iterative cycle:
         print("  Computing cluster QC summary...")
         summary = cluster_qc_summary(
             adata, cluster_key=cluster_key, batch_key=batch_key,
-            latent_key=latent_key, covariate_keys=covariate_keys)
+            latent_key=latent_key, umap_key=umap_key,
+            covariate_keys=covariate_keys)
         summary.to_csv(os.path.join(output_dir,
                                      "cluster_qc_summary.csv"))
         print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
@@ -1721,6 +1838,7 @@ Typical iterative cycle:
         decisions = load_decisions(args.decisions)
         print(f"  Loaded {args.decisions}")
         apply_decisions(adata, decisions, cluster_key=cluster_key,
+                        batch_key=batch_key,
                         output_dir=output_dir,
                         ignore_failed_queries=decisions_cfg.get(
                             "ignore_failed_queries", False))
