@@ -12,16 +12,16 @@ set -ex
 # upload the decisions, filter, then pass the filtered object to integrate and inspect
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
-  --input /root/capsule/data/260603_cmg_round1/integrated.h5ad \
-  --decisions /root/capsule/data/round1_decisions.yaml \
-  --output-dir /root/capsule/results/rounds/round_02
+  --input /root/capsule/data/260603_cmg_round2/integrated.h5ad \
+  --decisions /root/capsule/data/260603_cmg_round2/round2_decisions.yaml \
+  --output-dir /root/capsule/results/rounds/round_03
 
 python -u ./integrate_sns_scvi.py \
   --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_02/filtered.h5ad \
-  --output-dir /root/capsule/results/rounds/round_02
+  --input /root/capsule/results/rounds/round_03/filtered.h5ad \
+  --output-dir /root/capsule/results/rounds/round_03
 
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_02/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_02
+  --input /root/capsule/results/rounds/round_03/integrated.h5ad \
+  --output-dir /root/capsule/results/rounds/round_03
