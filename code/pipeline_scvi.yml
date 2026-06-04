@@ -117,9 +117,9 @@ embedding:
   leiden_resolution: 0.3
 
 inspection:
-  cluster_key: leiden_small_gene_zinb
-  latent_key: X_scVI_small_gene_zinb
-  umap_key: X_umap_small_gene_zinb
+  cluster_key: auto
+  latent_key: auto
+  umap_key: auto
   markers_json: null
   marker_threshold: 0.0
   neuronal_cutoff: 0.5
