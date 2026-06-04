@@ -25,7 +25,7 @@ python -u ./integrate_sns_scvi.py \
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
   --input /root/capsule/results/rounds/round_03/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_03/inspect_small_gene_zinb \
-  --cluster-key leiden_small_gene_zinb \
-  --latent-key X_scVI_small_gene_zinb \
-  --umap-key X_umap_small_gene_zinb
+  --output-dir /root/capsule/results/rounds/round_03/inspect_small_geneXcell_nb \
+  --cluster-key leiden_small_geneXcell_nb \
+  --latent-key X_scVI_small_geneXcell_nb \
+  --umap-key X_umap_small_geneXcell_nb
