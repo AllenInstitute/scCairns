@@ -29,7 +29,7 @@ integration:
   num_workers: 15
   dispersion: gene-cell
   gene_likelihood: nb
-  max_epochs: 200
+  max_epochs: 300
   early_stopping_patience: 20
   batch_size: 256
   hvg:
@@ -38,7 +38,7 @@ integration:
     flavor: seurat_v3
     min_batches: null
   sweep:
-    - name: small_gene_zinb_geneXcell
+    - name: small_geneXcell_zinb
       n_hidden: 64
       n_layers: 1
       n_latent: 10
@@ -46,8 +46,17 @@ integration:
       gene_likelihood: zinb
       batch_key: tech
       categorical_covariate_keys: []
+    
+    - name: small_geneXbatch_zinb
+      n_hidden: 64
+      n_layers: 1
+      n_latent: 10
+      dispersion: gene-batch
+      gene_likelihood: zinb
+      batch_key: tech
+      categorical_covariate_keys: []
 
-    - name: small_gene_zinb_gene
+    - name: small_gene_zinb
       n_hidden: 64
       n_layers: 1
       n_latent: 10
@@ -56,7 +65,7 @@ integration:
       batch_key: tech
       categorical_covariate_keys: []
 
-    - name: small_gene_nb_gene
+    - name: small_gene_nb
       n_hidden: 64
       n_layers: 1
       n_latent: 10
@@ -65,7 +74,7 @@ integration:
       batch_key: tech
       categorical_covariate_keys: []
 
-    - name: small_gene_nb_geneXcell
+    - name: small_geneXcell_nb
       n_hidden: 64
       n_layers: 1
       n_latent: 10
@@ -108,9 +117,9 @@ embedding:
   leiden_resolution: 0.3
 
 inspection:
-  cluster_key: auto
-  latent_key: auto
-  umap_key: auto
+  cluster_key: small_gene_zinb
+  latent_key: small_gene_zinb
+  umap_key: small_gene_zinb
   markers_json: null
   marker_threshold: 0.0
   neuronal_cutoff: 0.5
