@@ -47,6 +47,7 @@ Output
 
 import argparse
 import base64
+import copy
 import gc
 import io
 import json
@@ -381,6 +382,95 @@ def resolve_obsm_key(adata, explicit_key, candidates, key_label):
     else:
         print(f"  Auto-selected {key_label}: {selected}")
     return selected
+
+
+def resolve_inspection_keys(adata, inspection_cfg, annotation_cfg):
+    """Resolve cluster, latent, and UMAP keys for one inspection run."""
+    cluster_setting = inspection_cfg.get("cluster_key") or "auto"
+    cluster_candidates = ["leiden"] + [
+        c for c in adata.obs.columns if c.startswith("leiden_")
+    ]
+    cluster_key = resolve_obs_key(
+        adata, cluster_setting, cluster_candidates, "cluster key")
+    if cluster_key is None or cluster_key not in adata.obs.columns:
+        raise ValueError("No cluster column found. Use --cluster-key.")
+
+    latent_candidates = []
+    if annotation_cfg.get("enabled"):
+        latent_candidates.append("X_scANVI")
+    latent_candidates.extend(["X_scVI"] + [
+        k for k in adata.obsm if k.startswith("X_scVI_")
+    ])
+    latent_key = resolve_obsm_key(
+        adata, inspection_cfg.get("latent_key") or "auto",
+        latent_candidates, "latent key")
+
+    umap_candidates = []
+    if annotation_cfg.get("enabled"):
+        umap_candidates.append("X_umap_scanvi")
+    umap_candidates.extend(["X_umap"] + [
+        k for k in adata.obsm if k.startswith("X_umap_")
+    ])
+    umap_key = resolve_obsm_key(
+        adata, inspection_cfg.get("umap_key") or "auto",
+        umap_candidates, "UMAP key")
+
+    return cluster_key, latent_key, umap_key
+
+
+def _sweep_names_from_config(config):
+    sweep = config.get("integration", {}).get("sweep") or []
+    if isinstance(sweep, list):
+        return [entry.get("name") for entry in sweep if entry.get("name")]
+    if isinstance(sweep, dict):
+        return list(sweep.keys())
+    return []
+
+
+def find_sweep_architecture_keys(adata, config):
+    """Return complete key triplets for each sweep architecture in an AnnData."""
+    names = _sweep_names_from_config(config)
+    if not names:
+        names = sorted(
+            key.removeprefix("X_scVI_")
+            for key in adata.obsm
+            if key.startswith("X_scVI_")
+        )
+
+    architectures = []
+    skipped = []
+    for name in names:
+        keys = {
+            "name": name,
+            "cluster_key": f"leiden_{name}",
+            "latent_key": f"X_scVI_{name}",
+            "umap_key": f"X_umap_{name}",
+        }
+        missing = []
+        if keys["cluster_key"] not in adata.obs.columns:
+            missing.append(keys["cluster_key"])
+        if keys["latent_key"] not in adata.obsm:
+            missing.append(keys["latent_key"])
+        if keys["umap_key"] not in adata.obsm:
+            missing.append(keys["umap_key"])
+        if missing:
+            skipped.append((name, missing))
+            continue
+        architectures.append(keys)
+
+    for name, missing in skipped:
+        print(
+            f"  [WARN] Skipping sweep architecture '{name}'; missing "
+            f"{', '.join(missing)}"
+        )
+
+    if not architectures:
+        raise ValueError(
+            "No complete sweep architectures found. Expected matching "
+            "leiden_<name>, X_scVI_<name>, and X_umap_<name> keys."
+        )
+
+    return architectures
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1157,6 +1247,202 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
         f.write(html)
 
 
+def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
+                          latent_key, umap_key, batch_key, covariate_keys,
+                          command_args=None):
+    """Generate the full inspection report for one cluster/embedding triplet."""
+    os.makedirs(output_dir, exist_ok=True)
+
+    report_config = copy.deepcopy(config)
+    report_config["data"]["output_dir"] = output_dir
+    report_config["inspection"]["cluster_key"] = cluster_key
+    report_config["inspection"]["latent_key"] = latent_key
+    report_config["inspection"]["umap_key"] = umap_key
+    write_resolved_config(output_dir, report_config)
+    if command_args is not None:
+        write_command_args(output_dir, "inspect", command_args)
+
+    data_cfg = report_config["data"]
+    inspection_cfg = report_config["inspection"]
+    annotation_cfg = report_config["annotation"]
+
+    print(f"\n{'='*60}")
+    print("GENERATING INSPECTION REPORT")
+    print(f"{'='*60}")
+    print(f"  Output dir : {output_dir}")
+    print(f"  Cluster key: {cluster_key}")
+    print(f"  Latent key : {latent_key or 'none (silhouette disabled)'}")
+    print(f"  UMAP key   : {umap_key or 'none'}")
+
+    # 1. Load marker dict (needed early for fraction analysis)
+    if inspection_cfg.get("markers_json"):
+        with open(inspection_cfg["markers_json"]) as f:
+            marker_dict = json.load(f)
+    else:
+        marker_dict = inspection_cfg.get("marker_sets") or {}
+
+    # 2. Cluster QC summary
+    print("  Computing cluster QC summary...")
+    summary = cluster_qc_summary(
+        adata, cluster_key=cluster_key, batch_key=batch_key,
+        latent_key=latent_key, umap_key=umap_key,
+        covariate_keys=covariate_keys)
+    summary.to_csv(os.path.join(output_dir, "cluster_qc_summary.csv"))
+    print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
+    print(summary.to_string())
+
+    # 3. Marker fraction table + neuronal cluster identification
+    print("\n  Computing marker expression fractions...")
+    flat_markers = [g for genes in marker_dict.values() for g in genes]
+    fraction_table = calculate_percent_expressed(
+        adata, flat_markers, cluster_key,
+        threshold=inspection_cfg["marker_threshold"],
+        counts_layer=data_cfg["counts_layer"])
+
+    neuronal_markers = (
+        inspection_cfg.get("neuronal_markers") or DEFAULT_NEURONAL_MARKERS
+    )
+    neuronal_cutoff = inspection_cfg["neuronal_cutoff"]
+    neuronal_clusters, neuronal_frac = identify_neuronal_clusters(
+        fraction_table, neuronal_markers, neuronal_cutoff)
+
+    if neuronal_clusters:
+        print(f"  Likely neuronal clusters "
+              f"({len(neuronal_clusters)}, "
+              f"cutoff={neuronal_cutoff:.0%}): "
+              f"{neuronal_clusters}")
+    else:
+        print("  No clusters met neuronal marker criteria.")
+
+    # 4. Auto-flag
+    print("\n  Auto-flagging clusters...")
+    auto_flag_cfg = inspection_cfg["auto_flag"]
+    thresholds = {
+        "mt": auto_flag_cfg["mt_threshold"],
+        "min_genes": auto_flag_cfg["min_genes_threshold"],
+        "min_cells": auto_flag_cfg["min_cells"],
+        "single_batch": auto_flag_cfg["single_batch_threshold"],
+    }
+    flags = auto_flag_clusters(
+        summary,
+        mt_threshold=auto_flag_cfg["mt_threshold"],
+        min_genes_threshold=auto_flag_cfg["min_genes_threshold"],
+        min_cells=auto_flag_cfg["min_cells"],
+        single_batch_threshold=auto_flag_cfg["single_batch_threshold"],
+        silhouette_threshold=auto_flag_cfg.get("silhouette_threshold", -0.05),
+        covariate_keys=covariate_keys,
+    )
+
+    if flags:
+        for cl, reasons in flags.items():
+            print(f"    Cluster {cl}:")
+            for r in reasons:
+                print(f"      - {r}")
+    else:
+        print("    No clusters flagged.")
+
+    write_auto_flags_yaml(
+        flags, summary,
+        os.path.join(output_dir, "auto_flags.yaml"),
+        thresholds,
+        neuronal_clusters=neuronal_clusters)
+    print("  Saved auto_flags.yaml")
+
+    # 5. Plots
+    print("\n  Generating diagnostic plots...")
+    images = {}
+
+    images["UMAP Overview"] = plot_umap_overview(
+        adata, cluster_key, batch_key, output_dir,
+        umap_key=umap_key or "X_umap")
+
+    images["QC Summary Heatmap"] = plot_qc_summary_heatmap(
+        summary, flags, output_dir)
+
+    if batch_key and batch_key in adata.obs.columns:
+        images["Batch Composition"] = plot_batch_composition(
+            adata, cluster_key, batch_key, output_dir)
+
+    if covariate_keys:
+        print(f"  Generating covariate composition plots "
+              f"({covariate_keys})...")
+        cov_plots = plot_covariate_compositions(
+            adata, cluster_key, covariate_keys, output_dir)
+        for key, b64 in cov_plots.items():
+            images[f"Covariate Composition ({key})"] = b64
+
+    images["Marker Gene Expression"] = plot_marker_dotplot(
+        adata, cluster_key, marker_dict, output_dir)
+
+    if not fraction_table.empty:
+        images["Marker Fraction Heatmap"] = plot_marker_fraction_heatmap(
+            fraction_table, output_dir)
+        images["Cluster Marker PCA"] = plot_cluster_marker_pca(
+            fraction_table, output_dir,
+            color_gene=inspection_cfg["pca_color_gene"])
+
+    images["Cluster Silhouettes"] = plot_cluster_silhouettes(
+        summary, output_dir)
+
+    annotation_low_conf = pd.DataFrame()
+    prediction_key = annotation_cfg.get("prediction_key")
+    confidence_key = annotation_cfg.get("confidence_key")
+    if ((prediction_key and prediction_key in adata.obs.columns)
+            or (confidence_key and confidence_key in adata.obs.columns)):
+        print("  Generating annotation diagnostics...")
+        images.update(plot_annotation_umaps(
+            adata, prediction_key, confidence_key, output_dir,
+            umap_key=umap_key or "X_umap"))
+        images["Annotation Confidence Distribution"] = (
+            plot_annotation_confidence_distribution(
+                adata, confidence_key, output_dir,
+                min_confidence=annotation_cfg.get("min_confidence", 0.5))
+        )
+        images["Annotation Label Composition"] = (
+            plot_annotation_label_composition(
+                adata, cluster_key, prediction_key, output_dir)
+        )
+        annotation_low_conf = annotation_low_confidence_summary(
+            adata, cluster_key, prediction_key, confidence_key, output_dir,
+            min_confidence=annotation_cfg.get("min_confidence", 0.5))
+
+    # 6. HTML report
+    print("  Assembling HTML report...")
+    selected_keys = {
+        "latent_key": latent_key,
+        "umap_key": umap_key,
+        "cluster_key": cluster_key,
+    }
+    generate_html_report(
+        summary, flags, images, adata,
+        os.path.join(output_dir, "inspection_report.html"),
+        cluster_key, batch_key,
+        covariate_keys=covariate_keys,
+        neuronal_clusters=neuronal_clusters,
+        neuronal_fraction_table=neuronal_frac if not neuronal_frac.empty else None,
+        annotation_low_confidence_table=annotation_low_conf,
+        selected_keys=selected_keys)
+    print("  Saved inspection_report.html")
+
+    update_round_manifest(
+        output_dir,
+        "inspection",
+        {
+            "input_h5ad": input_path,
+            "cluster_key": cluster_key,
+            "latent_key": latent_key,
+            "umap_key": umap_key,
+            "batch_key": batch_key,
+            "covariate_keys": covariate_keys,
+            "thresholds": thresholds,
+            "n_clusters": len(summary),
+            "n_auto_flagged": len(flags),
+            "annotation_prediction_key": prediction_key,
+            "annotation_confidence_key": confidence_key,
+        },
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Apply decisions
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1492,6 +1778,10 @@ Typical iterative cycle:
                              "'X_scVI_*').")
     parser.add_argument("--umap-key", default=None,
                         help="Obsm key for UMAP (default: auto-detect).")
+    parser.add_argument("--all-sweep-architectures", action="store_true",
+                        help="Generate one inspection report for every complete "
+                             "sweep architecture key triplet. Reports are "
+                             "written to output-dir/inspect_<name>/.")
 
     # ── Markers ──
     parser.add_argument("--markers", default=None,
@@ -1532,6 +1822,9 @@ Typical iterative cycle:
                         help="Generate report even when --decisions is set.")
 
     args = parser.parse_args()
+    if args.all_sweep_architectures and args.decisions:
+        parser.error("--all-sweep-architectures cannot be combined with --decisions.")
+
     try:
         config = load_pipeline_config(args.config, legacy_output_dir=".")
         apply_inspection_cli_overrides(config, args)
@@ -1596,43 +1889,31 @@ Typical iterative cycle:
     config["data"]["batch_key"] = batch_key
     config["data"]["categorical_covariate_keys"] = covariate_keys
 
-    # ── Auto-detect cluster key ──
-    cluster_setting = inspection_cfg.get("cluster_key") or "auto"
-    cluster_candidates = ["leiden"] + [
-        c for c in adata.obs.columns if c.startswith("leiden_")
-    ]
-    cluster_key = resolve_obs_key(
-        adata, cluster_setting, cluster_candidates, "cluster key")
-    if cluster_key is None or cluster_key not in adata.obs.columns:
-        print(f"  [ERROR] No cluster column found. Use --cluster-key.")
-        return
-    print(f"  Cluster key: {cluster_key}")
-
-    latent_candidates = []
-    if annotation_cfg.get("enabled"):
-        latent_candidates.append("X_scANVI")
-    latent_candidates.extend(["X_scVI"] + [
-        k for k in adata.obsm if k.startswith("X_scVI_")
-    ])
-    latent_key = resolve_obsm_key(
-        adata, inspection_cfg.get("latent_key") or "auto",
-        latent_candidates, "latent key")
-    print(f"  Latent key: {latent_key or 'none (silhouette disabled)'}")
-
-    umap_candidates = []
-    if annotation_cfg.get("enabled"):
-        umap_candidates.append("X_umap_scanvi")
-    umap_candidates.extend(["X_umap"] + [
-        k for k in adata.obsm if k.startswith("X_umap_")
-    ])
-    umap_key = resolve_obsm_key(
-        adata, inspection_cfg.get("umap_key") or "auto",
-        umap_candidates, "UMAP key")
-    print(f"  UMAP key: {umap_key or 'none'}")
-    config["inspection"]["cluster_key"] = cluster_key
-    config["inspection"]["latent_key"] = latent_key
-    config["inspection"]["umap_key"] = umap_key
-    write_resolved_config(output_dir, config)
+    if args.all_sweep_architectures:
+        inspection_runs = find_sweep_architecture_keys(adata, config)
+        print(f"  Found {len(inspection_runs)} complete sweep architecture(s).")
+    else:
+        try:
+            cluster_key, latent_key, umap_key = resolve_inspection_keys(
+                adata, inspection_cfg, annotation_cfg
+            )
+        except ValueError as e:
+            print(f"  [ERROR] {e}")
+            return
+        print(f"  Cluster key: {cluster_key}")
+        print(f"  Latent key: {latent_key or 'none (silhouette disabled)'}")
+        print(f"  UMAP key: {umap_key or 'none'}")
+        config["inspection"]["cluster_key"] = cluster_key
+        config["inspection"]["latent_key"] = latent_key
+        config["inspection"]["umap_key"] = umap_key
+        write_resolved_config(output_dir, config)
+        inspection_runs = [{
+            "name": None,
+            "cluster_key": cluster_key,
+            "latent_key": latent_key,
+            "umap_key": umap_key,
+            "output_dir": output_dir,
+        }]
 
     # Ensure QC metrics exist
     if "n_genes_by_counts" not in adata.obs.columns:
@@ -1657,176 +1938,22 @@ Typical iterative cycle:
     generate_report = (args.decisions is None) or args.report
 
     if generate_report:
-        print(f"\n{'='*60}")
-        print("GENERATING INSPECTION REPORT")
-        print(f"{'='*60}")
-
-        # 1. Load marker dict (needed early for fraction analysis)
-        if inspection_cfg.get("markers_json"):
-            with open(inspection_cfg["markers_json"]) as f:
-                marker_dict = json.load(f)
-        else:
-            marker_dict = inspection_cfg.get("marker_sets") or {}
-
-        # 2. Cluster QC summary
-        print("  Computing cluster QC summary...")
-        summary = cluster_qc_summary(
-            adata, cluster_key=cluster_key, batch_key=batch_key,
-            latent_key=latent_key, umap_key=umap_key,
-            covariate_keys=covariate_keys)
-        summary.to_csv(os.path.join(output_dir,
-                                     "cluster_qc_summary.csv"))
-        print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
-        print(summary.to_string())
-
-        # 3. Marker fraction table + neuronal cluster identification
-        print("\n  Computing marker expression fractions...")
-        flat_markers = [g for genes in marker_dict.values() for g in genes]
-        fraction_table = calculate_percent_expressed(
-            adata, flat_markers, cluster_key,
-            threshold=inspection_cfg["marker_threshold"],
-            counts_layer=data_cfg["counts_layer"])
-
-        neuronal_markers = inspection_cfg.get("neuronal_markers") or DEFAULT_NEURONAL_MARKERS
-        neuronal_cutoff = inspection_cfg["neuronal_cutoff"]
-        neuronal_clusters, neuronal_frac = identify_neuronal_clusters(
-            fraction_table, neuronal_markers, neuronal_cutoff)
-
-        if neuronal_clusters:
-            print(f"  Likely neuronal clusters "
-                  f"({len(neuronal_clusters)}, "
-                  f"cutoff={neuronal_cutoff:.0%}): "
-                  f"{neuronal_clusters}")
-        else:
-            print("  No clusters met neuronal marker criteria.")
-
-        # 4. Auto-flag
-        print("\n  Auto-flagging clusters...")
-        auto_flag_cfg = inspection_cfg["auto_flag"]
-        thresholds = {
-            "mt": auto_flag_cfg["mt_threshold"],
-            "min_genes": auto_flag_cfg["min_genes_threshold"],
-            "min_cells": auto_flag_cfg["min_cells"],
-            "single_batch": auto_flag_cfg["single_batch_threshold"],
-        }
-        flags = auto_flag_clusters(
-            summary,
-            mt_threshold=auto_flag_cfg["mt_threshold"],
-            min_genes_threshold=auto_flag_cfg["min_genes_threshold"],
-            min_cells=auto_flag_cfg["min_cells"],
-            single_batch_threshold=auto_flag_cfg["single_batch_threshold"],
-            silhouette_threshold=auto_flag_cfg.get("silhouette_threshold", -0.05),
-            covariate_keys=covariate_keys,
-        )
-
-        if flags:
-            for cl, reasons in flags.items():
-                print(f"    Cluster {cl}:")
-                for r in reasons:
-                    print(f"      - {r}")
-        else:
-            print("    No clusters flagged.")
-
-        write_auto_flags_yaml(
-            flags, summary,
-            os.path.join(output_dir, "auto_flags.yaml"),
-            thresholds,
-            neuronal_clusters=neuronal_clusters)
-        print("  Saved auto_flags.yaml")
-
-        # 5. Plots
-        print("\n  Generating diagnostic plots...")
-        images = {}
-
-        images["UMAP Overview"] = plot_umap_overview(
-            adata, cluster_key, batch_key, output_dir,
-            umap_key=umap_key or "X_umap")
-
-        images["QC Summary Heatmap"] = plot_qc_summary_heatmap(
-            summary, flags, output_dir)
-
-        if batch_key and batch_key in adata.obs.columns:
-            images["Batch Composition"] = plot_batch_composition(
-                adata, cluster_key, batch_key, output_dir)
-
-        if covariate_keys:
-            print(f"  Generating covariate composition plots "
-                  f"({covariate_keys})...")
-            cov_plots = plot_covariate_compositions(
-                adata, cluster_key, covariate_keys, output_dir)
-            for key, b64 in cov_plots.items():
-                images[f"Covariate Composition ({key})"] = b64
-
-        images["Marker Gene Expression"] = plot_marker_dotplot(
-            adata, cluster_key, marker_dict, output_dir)
-
-        if not fraction_table.empty:
-            images["Marker Fraction Heatmap"] = plot_marker_fraction_heatmap(
-                fraction_table, output_dir)
-            images["Cluster Marker PCA"] = plot_cluster_marker_pca(
-                fraction_table, output_dir,
-                color_gene=inspection_cfg["pca_color_gene"])
-
-        images["Cluster Silhouettes"] = plot_cluster_silhouettes(
-            summary, output_dir)
-
-        annotation_low_conf = pd.DataFrame()
-        prediction_key = annotation_cfg.get("prediction_key")
-        confidence_key = annotation_cfg.get("confidence_key")
-        if ((prediction_key and prediction_key in adata.obs.columns)
-                or (confidence_key and confidence_key in adata.obs.columns)):
-            print("  Generating annotation diagnostics...")
-            images.update(plot_annotation_umaps(
-                adata, prediction_key, confidence_key, output_dir,
-                umap_key=umap_key or "X_umap"))
-            images["Annotation Confidence Distribution"] = (
-                plot_annotation_confidence_distribution(
-                    adata, confidence_key, output_dir,
-                    min_confidence=annotation_cfg.get("min_confidence", 0.5))
+        for run in inspection_runs:
+            run_output_dir = run.get("output_dir") or os.path.join(
+                output_dir, f"inspect_{run['name']}"
             )
-            images["Annotation Label Composition"] = (
-                plot_annotation_label_composition(
-                    adata, cluster_key, prediction_key, output_dir)
+            run_inspection_report(
+                adata,
+                config,
+                input_path,
+                run_output_dir,
+                cluster_key=run["cluster_key"],
+                latent_key=run["latent_key"],
+                umap_key=run["umap_key"],
+                batch_key=batch_key,
+                covariate_keys=covariate_keys,
+                command_args=vars(args),
             )
-            annotation_low_conf = annotation_low_confidence_summary(
-                adata, cluster_key, prediction_key, confidence_key, output_dir,
-                min_confidence=annotation_cfg.get("min_confidence", 0.5))
-
-        # 6. HTML report
-        print("  Assembling HTML report...")
-        selected_keys = {
-            "latent_key": latent_key,
-            "umap_key": umap_key,
-            "cluster_key": cluster_key,
-        }
-        generate_html_report(
-            summary, flags, images, adata,
-            os.path.join(output_dir, "inspection_report.html"),
-            cluster_key, batch_key,
-            covariate_keys=covariate_keys,
-            neuronal_clusters=neuronal_clusters,
-            neuronal_fraction_table=neuronal_frac if not neuronal_frac.empty else None,
-            annotation_low_confidence_table=annotation_low_conf,
-            selected_keys=selected_keys)
-        print("  Saved inspection_report.html")
-
-        update_round_manifest(
-            output_dir,
-            "inspection",
-            {
-                "input_h5ad": input_path,
-                "cluster_key": cluster_key,
-                "latent_key": latent_key,
-                "umap_key": umap_key,
-                "batch_key": batch_key,
-                "covariate_keys": covariate_keys,
-                "thresholds": thresholds,
-                "n_clusters": len(summary),
-                "n_auto_flagged": len(flags),
-                "annotation_prediction_key": prediction_key,
-                "annotation_confidence_key": confidence_key,
-            },
-        )
 
     # ══════════════════════════════════════════════════════════════════════
     #  Filter mode

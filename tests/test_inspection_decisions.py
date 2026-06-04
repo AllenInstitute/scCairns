@@ -13,7 +13,11 @@ sys.path.insert(0, str(ROOT / "code"))
 anndata = pytest.importorskip("anndata")
 pytest.importorskip("scanpy")
 
-from inspect_integration import apply_decisions, cluster_qc_summary  # noqa: E402
+from inspect_integration import (  # noqa: E402
+    apply_decisions,
+    cluster_qc_summary,
+    find_sweep_architecture_keys,
+)
 
 
 def _adata():
@@ -83,3 +87,26 @@ def test_cluster_qc_summary_reports_latent_and_umap_silhouette():
     assert "silhouette" not in summary.columns
     assert np.isfinite(summary["silhouette_latent"]).all()
     assert np.isfinite(summary["silhouette_umap"]).all()
+
+
+def test_find_sweep_architecture_keys_uses_config_order():
+    adata = _adata()
+    for name in ["small", "medium"]:
+        adata.obs[f"leiden_{name}"] = pd.Categorical(["0", "0", "1", "1"])
+        adata.obsm[f"X_scVI_{name}"] = np.ones((4, 2))
+        adata.obsm[f"X_umap_{name}"] = np.ones((4, 2))
+
+    config = {
+        "integration": {
+            "sweep": [
+                {"name": "medium"},
+                {"name": "small"},
+            ]
+        }
+    }
+
+    runs = find_sweep_architecture_keys(adata, config)
+
+    assert [run["name"] for run in runs] == ["medium", "small"]
+    assert runs[0]["cluster_key"] == "leiden_medium"
+    assert runs[1]["latent_key"] == "X_scVI_small"
