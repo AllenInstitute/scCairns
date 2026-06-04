@@ -8,8 +8,7 @@ filtering decisions, and re-integration.
 integrate -> inspect -> edit decisions -> filter -> re-integrate
 ```
 
-The primary interface is now a versioned YAML config. Existing CLI arguments are
-still supported as overrides for common fields.
+The primary interface is a versioned YAML config for integration/inspection and `decisions.yaml` files for filtering decisions. CLI arguments are supported as overrides for common fields.
 
 ## Main Scripts
 
@@ -53,6 +52,27 @@ python code/inspect_integration.py \
 
 For the next round, update `data.input_h5ad` to `rounds/round_02/filtered.h5ad`
 and set `data.output_dir` to `rounds/round_02`, then re-run integration.
+
+Or, perform round_1 integration and inspection, then generate the `decisions.yaml` and re-run inspection to filter. Export the filtered object to round_2 of integration and inspection:
+
+```
+python -u ./inspect_integration.py \
+  --config ./pipeline_scvi.yml \
+  --input /root/capsule/results/rounds/round_01/integrated.h5ad \
+  --decisions /root/capsule/results/rounds/round_01/decisions.yaml \
+  --output-dir /root/capsule/results/rounds/round_02
+
+python -u ./integrate_sns_scvi.py \
+  --config ./pipeline_scvi.yml \
+  --input /root/capsule/results/rounds/round_02/filtered.h5ad \
+  --output-dir /root/capsule/results/rounds/round_02
+
+python -u ./inspect_integration.py \
+  --config ./pipeline_scvi.yml \
+  --input /root/capsule/results/rounds/round_02/integrated.h5ad \
+  --output-dir /root/capsule/results/rounds/round_02
+  ```
+
 
 ## Local Test Environment
 
