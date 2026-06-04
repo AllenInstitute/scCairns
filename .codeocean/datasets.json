@@ -2,6 +2,14 @@
 	"version": 1,
 	"attached_datasets": [
 		{
+			"id": "1ce41721-3cf1-4065-a868-948778934f0e",
+			"mount": "260603_cmg_round2"
+		},
+		{
+			"id": "630540b6-7cbc-4597-ad6d-2cfb04749aaa",
+			"mount": "260603_cmg_round1"
+		},
+		{
 			"id": "69d0ac39-1c7d-4419-ada1-ef0186e5ff4c",
 			"mount": "260603_CMG_untreated_unint"
 		},

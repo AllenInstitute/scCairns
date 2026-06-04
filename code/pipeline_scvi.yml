@@ -1,8 +1,8 @@
 pipeline_version: 1
 
 data:
-  input_h5ad: /root/capsule/data/260603_CMG_untreated_unint/cmg_untreated_260603.h5ad
-  output_dir: /root/capsule/results/rounds/round_01
+  input_h5ad: /root/capsule/data/260603_cmg_round1/integrated.h5ad
+  output_dir: /root/capsule/results/rounds/round_02
   counts_layer: counts
   batch_key: tech
   categorical_covariate_keys: []
