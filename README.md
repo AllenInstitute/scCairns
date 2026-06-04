@@ -289,6 +289,26 @@ Each run writes a cumulative round record:
 | `inspection_report.html` | Self-contained inspection report |
 | `auto_flags.yaml` | Editable starting point for filtering decisions |
 | `filtered.h5ad` | Filtered object produced by applying decisions |
+| `filtering_retention_summary.csv` | Pre/post decision-filtering counts overall, by cluster, by batch, and by cluster x batch |
+
+`cluster_qc_summary.csv` reports both `silhouette_latent` and
+`silhouette_umap`. Auto-flagging uses `silhouette_latent` so UMAP visual
+compactness remains a separate diagnostic rather than the filtering criterion.
+
+For sweep outputs, inspect every complete architecture key triplet in one call:
+
+```bash
+python code/inspect_integration.py \
+  --config pipeline.yml \
+  --input rounds/round_02_sweep/integrated.h5ad \
+  --output-dir rounds/round_02_sweep \
+  --all-sweep-architectures
+```
+
+This writes one report directory per architecture, for example
+`rounds/round_02_sweep/inspect_small_gene_nb/`. Filtering with `--decisions`
+still uses a single selected cluster key and cannot be combined with
+`--all-sweep-architectures`.
 
 ## Notes
 
