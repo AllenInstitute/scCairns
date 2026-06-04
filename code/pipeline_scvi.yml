@@ -37,7 +37,60 @@ integration:
     batch_key: tech
     flavor: seurat_v3
     min_batches: null
-  sweep: []
+  sweep:
+    - name: small_gene_zinb_geneXcell
+      n_hidden: 64
+      n_layers: 1
+      n_latent: 10
+      dispersion: gene-cell
+      gene_likelihood: zinb
+      batch_key: tech
+      categorical_covariate_keys: []
+
+    - name: small_gene_zinb_gene
+      n_hidden: 64
+      n_layers: 1
+      n_latent: 10
+      dispersion: gene
+      gene_likelihood: zinb
+      batch_key: tech
+      categorical_covariate_keys: []
+
+    - name: small_gene_nb_gene
+      n_hidden: 64
+      n_layers: 1
+      n_latent: 10
+      dispersion: gene
+      gene_likelihood: nb
+      batch_key: tech
+      categorical_covariate_keys: []
+
+    - name: small_gene_nb_geneXcell
+      n_hidden: 64
+      n_layers: 1
+      n_latent: 10
+      dispersion: gene-cell
+      gene_likelihood: nb
+      batch_key: tech
+      categorical_covariate_keys: []
+
+    - name: medium_gene_batch_nb
+      n_hidden: 128
+      n_layers: 2
+      n_latent: 16
+      dispersion: gene-batch
+      gene_likelihood: nb
+      batch_key: tech
+      categorical_covariate_keys: []
+
+    - name: medium_gene_cell_nb
+      n_hidden: 128
+      n_layers: 2
+      n_latent: 32
+      dispersion: gene-cell
+      gene_likelihood: nb
+      batch_key: tech
+      categorical_covariate_keys: []
 
 annotation:
   enabled: false
