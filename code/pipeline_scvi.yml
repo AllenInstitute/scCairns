@@ -73,8 +73,17 @@ integration:
       gene_likelihood: nb
       batch_key: tech
       categorical_covariate_keys: []
-
-    - name: medium_gene_cell_nb
+   
+    - name: medium_geneXcell_nb
+      n_hidden: 80
+      n_layers: 2
+      n_latent: 24
+      dispersion: gene-cell
+      gene_likelihood: nb
+      batch_key: tech
+      categorical_covariate_keys: []
+    
+    - name: large_geneXcell_cell_nb
       n_hidden: 128
       n_layers: 2
       n_latent: 32
