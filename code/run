@@ -21,11 +21,9 @@ python -u ./integrate_sns_scvi.py \
   --input /root/capsule/results/rounds/round_03/filtered.h5ad \
   --output-dir /root/capsule/results/rounds/round_03
 
-# supply the key of the integration we want to inspect
+# supply the keys of the integration we want to inspect or all sweeps
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
   --input /root/capsule/results/rounds/round_03/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_03/inspect_small_geneXcell_nb \
-  --cluster-key leiden_small_geneXcell_nb \
-  --latent-key X_scVI_small_geneXcell_nb \
-  --umap-key X_umap_small_geneXcell_nb
+  --output-dir /root/capsule/results/rounds/round_03_sweep \
+  --all-sweep-architectures
