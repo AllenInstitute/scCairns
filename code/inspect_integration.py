@@ -68,6 +68,8 @@ import seaborn as sns
 from pipeline_config import (
     ConfigError,
     SNS_MARKER_SETS,
+    collect_code_provenance,
+    collect_package_versions,
     fingerprint_file,
     load_pipeline_config,
     read_parent_provenance,
@@ -77,6 +79,7 @@ from pipeline_config import (
     validate_config,
     write_command_args,
     write_resolved_config,
+    write_yaml_record,
 )
 
 
@@ -1062,11 +1065,79 @@ def load_decisions(path):
 #  HTML report
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _render_provenance_section(provenance):
+    """Render the run-provenance dict as an HTML section, or '' if absent."""
+    if not provenance:
+        return ""
+
+    def esc(value):
+        text = "—" if value is None else str(value)
+        return (text.replace("&", "&amp;").replace("<", "&lt;")
+                    .replace(">", "&gt;"))
+
+    rows = []
+
+    def row(label, value):
+        rows.append(
+            f"<tr><td style='text-align:left'><strong>{esc(label)}</strong></td>"
+            f"<td style='text-align:left'>{esc(value)}</td></tr>")
+
+    row("Pipeline version", provenance.get("pipeline_version"))
+    seed = provenance.get("seed", "unset")
+    row("RNG seed", "unset (non-reproducible)" if seed is None else seed)
+
+    code = provenance.get("code") or {}
+    commit = code.get("commit_short") or code.get("commit")
+    if commit and code.get("dirty"):
+        commit = f"{commit} (+uncommitted changes)"
+    row("Code commit", commit)
+    row("Code branch", code.get("branch"))
+
+    inp = provenance.get("input") or {}
+    row("Input file", inp.get("path"))
+    sha = inp.get("sha256")
+    row("Input SHA-256", sha[:16] + "…" if sha else None)
+    if inp.get("size_bytes") is not None:
+        row("Input size", f"{inp['size_bytes']:,} bytes")
+
+    cfg_sha = provenance.get("config_sha256")
+    if cfg_sha:
+        row("Resolved config SHA-256", cfg_sha[:16] + "…")
+
+    parent = provenance.get("parent_round")
+    if parent:
+        pc_commit = parent.get("commit")
+        pc_seed = parent.get("seed")
+        bits = []
+        if parent.get("input_file"):
+            bits.append(parent["input_file"])
+        if pc_commit:
+            bits.append(f"commit {str(pc_commit)[:12]}")
+        if pc_seed is not None:
+            bits.append(f"seed {pc_seed}")
+        row("Parent round", ", ".join(bits) if bits else parent.get("manifest_path"))
+
+    packages = provenance.get("packages") or {}
+    if packages:
+        pkg_text = ", ".join(
+            f"{name} {ver}" for name, ver in packages.items() if ver)
+        row("Key packages", pkg_text)
+
+    row("Report generated", provenance.get("generated"))
+
+    return (
+        "<h2>Run Provenance</h2>"
+        "<p style='font-size:13px;color:#666;'>Captured for reproducibility. "
+        "Full machine-readable record in <code>round_manifest.json</code>.</p>"
+        "<table>" + "".join(rows) + "</table>"
+    )
+
+
 def generate_html_report(summary_df, flags, images, adata, output_path,
                           cluster_key, batch_key, covariate_keys=None,
                           neuronal_clusters=None, neuronal_fraction_table=None,
                           annotation_low_confidence_table=None,
-                          selected_keys=None):
+                          selected_keys=None, provenance=None):
     """Generate a self-contained HTML inspection report."""
     n_flagged = len(flags)
     n_flagged_cells = 0
@@ -1166,6 +1237,8 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
     selected_keys_footer = " &middot; ".join(
         f"{k}: {v}" for k, v in selected_keys.items() if v)
 
+    provenance_section = _render_provenance_section(provenance)
+
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -1234,6 +1307,8 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
 {neuronal_section}
 
 {annotation_section}
+
+{provenance_section}
 
 <hr>
 <p style="font-size:12px; color:#999;">
@@ -1416,6 +1491,24 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         "umap_key": umap_key,
         "cluster_key": cluster_key,
     }
+
+    # Provenance footer: surface the same record written to round_manifest.json
+    # in the human-readable report so the artifact a reviewer reads is itself
+    # self-documenting (seed, code commit, input fingerprint, parent lineage).
+    resolved_config_path = os.path.join(output_dir, "run_config_resolved.yml")
+    provenance = {
+        "pipeline_version": report_config.get("pipeline_version"),
+        "seed": report_config.get("reproducibility", {}).get("seed", "unset"),
+        "code": collect_code_provenance(),
+        "input": fingerprint_file(input_path),
+        "config_sha256": (fingerprint_file(resolved_config_path) or {}).get("sha256"),
+        "parent_round": read_parent_provenance(input_path),
+        "packages": collect_package_versions(
+            ["anndata", "scanpy", "scvi-tools", "scib-metrics", "numpy"]
+        ),
+        "generated": datetime.now().isoformat(timespec="seconds"),
+    }
+
     generate_html_report(
         summary, flags, images, adata,
         os.path.join(output_dir, "inspection_report.html"),
@@ -1424,7 +1517,8 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         neuronal_clusters=neuronal_clusters,
         neuronal_fraction_table=neuronal_frac if not neuronal_frac.empty else None,
         annotation_low_confidence_table=annotation_low_conf,
-        selected_keys=selected_keys)
+        selected_keys=selected_keys,
+        provenance=provenance)
     print("  Saved inspection_report.html")
 
     update_round_manifest(
@@ -1670,27 +1764,7 @@ def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
     }
 
     applied_path = os.path.join(output_dir, "decisions_applied.yaml")
-    with open(applied_path, "w") as f:
-        f.write(f"timestamp: \"{applied['timestamp']}\"\n")
-        f.write(f"n_cells_before: {n_before}\n")
-        f.write(f"n_cells_after: {n_after}\n")
-        f.write(f"n_removed: {n_total_removed}\n")
-        f.write(f"notes: \"{applied.get('notes', '')}\"\n")
-        f.write("actions:\n")
-        for a in log_entries:
-            f.write(f"  - type: \"{a['type']}\"\n")
-            if "cluster" in a:
-                f.write(f"    cluster: \"{a['cluster']}\"\n")
-            if "clusters" in a:
-                f.write(f"    clusters: {a['clusters']}\n")
-            if "query" in a:
-                f.write(f"    query: \"{a['query']}\"\n")
-            # keep actions use n_excluded; remove actions use n_removed
-            count = a.get("n_excluded", a.get("n_removed", 0))
-            count_key = "n_excluded" if "n_excluded" in a else "n_removed"
-            f.write(f"    {count_key}: {count}\n")
-            r = a.get("reasons", a.get("reason", ""))
-            f.write(f"    reason: \"{r}\"\n")
+    write_yaml_record(applied_path, applied)
     print(f"  Saved {applied_path}")
 
     # Round manifest

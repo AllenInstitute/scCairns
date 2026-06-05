@@ -326,6 +326,23 @@ Leiden **cluster IDs** that `decisions.yaml` files reference stable across
 re-runs of the same config. Set `seed: null` to leave RNG state untouched for an
 intentionally non-reproducible run; the manifest records `null` in that case.
 
+**Provenance footer.** `inspection_report.html` ends with a **Run Provenance**
+section that surfaces the same record written to `round_manifest.json` —
+pipeline version, RNG seed, code commit (with a `+uncommitted changes` marker
+when the working tree was dirty), input file path and SHA-256, resolved-config
+SHA-256, the parent-round pointer, and key package versions. The human-readable
+artifact is therefore self-documenting; the JSON manifest remains the full
+machine-readable record.
+
+**Invocation history.** `command_args.json` keeps an append-only `history` list
+of every stage invocation (in order), in addition to `commands[stage]` (the most
+recent invocation per stage). Re-running a stage in the same output directory no
+longer overwrites the earlier record.
+
+**Safe serialization.** `decisions_applied.yaml` is written with
+`yaml.safe_dump`, so reason and query strings containing quotes, colons, or
+newlines are escaped correctly and the file round-trips through `yaml.safe_load`.
+
 For sweep outputs, inspect every complete architecture key triplet in one call:
 
 ```bash
