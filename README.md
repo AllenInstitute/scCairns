@@ -112,6 +112,9 @@ Minimal scVI-only config:
 ```yaml
 pipeline_version: 1
 
+reproducibility:
+  seed: 0
+
 data:
   input_h5ad: data/combined_sns_adata.h5ad
   output_dir: rounds/round_01
@@ -294,6 +297,34 @@ Each run writes a cumulative round record:
 `cluster_qc_summary.csv` reports both `silhouette_latent` and
 `silhouette_umap`. Auto-flagging uses `silhouette_latent` so UMAP visual
 compactness remains a separate diagnostic rather than the filtering criterion.
+
+### Reproducibility and lineage
+
+Every `round_manifest.json` now records, in addition to the per-stage payloads:
+
+- `reproducibility.seed` — the global RNG seed applied to the run (see below).
+- `code` — the pipeline's own git revision: `commit`, `commit_short`, `branch`,
+  `commit_time`, and a `dirty` flag set when uncommitted tracked changes were
+  present. Fields are null when git metadata is unavailable.
+- `input_fingerprint` (per stage) — resolved path, `size_bytes`, `mtime`, and a
+  `sha256` content digest of the input h5ad, so a recorded input can be verified
+  rather than only named.
+- `parent_round` (per stage) — when the input lives beside another round's
+  `round_manifest.json` (e.g. `round_02/filtered.h5ad`), a structured pointer to
+  that manifest with its `commit`, `seed`, and timestamps. This makes the
+  round-to-round chain an explicit lineage link rather than an inference from
+  directory names.
+
+The decisions stage additionally fingerprints the applied `decisions.yaml`
+(`decisions_fingerprint`) so the exact filtering record is tied to its content.
+
+**Seeding.** `reproducibility.seed` is applied before any stochastic step via
+`scvi.settings.seed`, which seeds Python `random`, NumPy, and Torch (through
+Lightning's `seed_everything`). This makes scVI/scANVI training, the neighbor
+graph, UMAP, and Leiden clustering deterministic — and therefore makes the
+Leiden **cluster IDs** that `decisions.yaml` files reference stable across
+re-runs of the same config. Set `seed: null` to leave RNG state untouched for an
+intentionally non-reproducible run; the manifest records `null` in that case.
 
 For sweep outputs, inspect every complete architecture key triplet in one call:
 
