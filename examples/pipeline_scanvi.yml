@@ -1,5 +1,8 @@
 pipeline_version: 1
 
+reproducibility:
+  seed: 0          # global RNG seed; set to null for an unseeded (non-reproducible) run
+
 data:
   input_h5ad: data/combined_sns_adata.h5ad
   output_dir: rounds/round_01_scanvi

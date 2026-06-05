@@ -1,5 +1,8 @@
 pipeline_version: 1
 
+reproducibility:
+  seed: 0          # global RNG seed; set to null for an unseeded (non-reproducible) run
+
 data:
   input_h5ad: /root/capsule/data/260603_cmg_round1/integrated.h5ad
   output_dir: /root/capsule/results/rounds/round_02
