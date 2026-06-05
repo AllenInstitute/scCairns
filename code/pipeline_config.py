@@ -308,8 +308,39 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+def write_yaml_record(path: str, data: Mapping[str, Any]) -> str:
+    """Serialize a record to a YAML file safely.
+
+    Uses ``yaml.safe_dump`` so values containing quotes, colons, newlines, or
+    other YAML-significant characters are escaped correctly. When PyYAML is
+    unavailable, falls back to ``json.dump`` — JSON is a subset of YAML, so the
+    output remains valid YAML and round-trips through ``yaml.safe_load``. This
+    replaces hand-built f-string serialization, which could emit invalid or
+    misleading YAML for arbitrary reason/query strings.
+    """
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    safe = _json_safe(dict(data))
+    try:
+        import yaml  # type: ignore[import-untyped]
+
+        with open(path, "w", encoding="utf-8") as handle:
+            yaml.safe_dump(safe, handle, sort_keys=False, default_flow_style=False)
+    except ImportError:
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump(safe, handle, indent=2)
+            handle.write("\n")
+    return path
+
+
 def write_command_args(output_dir: str, stage: str, args: Mapping[str, Any]) -> str:
-    """Merge command arguments for a stage into command_args.json."""
+    """Record command arguments for a stage in command_args.json.
+
+    ``commands[stage]`` holds the most recent invocation of each stage (kept for
+    backward compatibility). ``history`` is an append-only list recording every
+    invocation in order, so re-running a stage in the same output directory no
+    longer silently overwrites the prior record — the full sequence of what was
+    run in the round is preserved.
+    """
     os.makedirs(output_dir, exist_ok=True)
     out_path = os.path.join(output_dir, "command_args.json")
     payload: Dict[str, Any] = {}
@@ -319,12 +350,16 @@ def write_command_args(output_dir: str, stage: str, args: Mapping[str, Any]) -> 
                 payload = json.load(handle)
         except json.JSONDecodeError:
             payload = {}
-    payload.setdefault("commands", {})
-    payload["commands"][stage] = {
+    entry = {
+        "stage": stage,
         "timestamp": datetime.now().isoformat(),
         "argv": sys.argv,
         "args": _json_safe(dict(args)),
     }
+    payload.setdefault("commands", {})
+    payload["commands"][stage] = entry
+    payload.setdefault("history", [])
+    payload["history"].append(entry)
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
         handle.write("\n")

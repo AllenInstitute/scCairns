@@ -24,6 +24,8 @@ from pipeline_config import (  # noqa: E402
     read_parent_provenance,
     set_global_seed,
     update_round_manifest,
+    write_command_args,
+    write_yaml_record,
 )
 
 
@@ -116,3 +118,79 @@ def test_update_round_manifest_stamps_code_and_seed(tmp_path):
     manifest2 = json.loads(Path(mp).read_text(encoding="utf-8"))
     assert manifest2["reproducibility"]["seed"] == 42
     assert manifest2["inspection"]["n_clusters"] == 3
+
+
+# ── Fix: append-only invocation history in command_args.json ────────────────
+def test_command_args_keeps_invocation_history(tmp_path):
+    out = tmp_path / "round_01"
+    write_command_args(str(out), "inspect", {"input": "a.h5ad"})
+    write_command_args(str(out), "inspect", {"input": "b.h5ad"})
+    write_command_args(str(out), "integrate", {"input": "b.h5ad"})
+
+    payload = json.loads(
+        (out / "command_args.json").read_text(encoding="utf-8"))
+
+    # history records every invocation in order (re-runs are not lost).
+    assert len(payload["history"]) == 3
+    assert [h["stage"] for h in payload["history"]] == [
+        "inspect", "inspect", "integrate"]
+    assert payload["history"][0]["args"]["input"] == "a.h5ad"
+    assert payload["history"][1]["args"]["input"] == "b.h5ad"
+    # commands[stage] still holds the most recent invocation per stage.
+    assert payload["commands"]["inspect"]["args"]["input"] == "b.h5ad"
+
+
+# ── Fix: decisions records serialized with safe YAML ────────────────────────
+def test_write_yaml_record_escapes_special_chars(tmp_path):
+    yaml = pytest.importorskip("yaml")
+    path = tmp_path / "decisions_applied.yaml"
+    record = {
+        "timestamp": "2026-06-04T12:00:00",
+        "n_removed": 13,
+        "notes": 'review: contains a "quote", a colon: and\na newline',
+        "actions": [
+            {
+                "type": "remove_query",
+                "query": "neuron_type.isin(['GABAergic']) & (tech == 'scale')",
+                "reason": 'dropped: it had "issues"',
+                "n_removed": 13,
+            }
+        ],
+    }
+    write_yaml_record(str(path), record)
+
+    # The whole point: it round-trips back to the exact structure, which the
+    # old hand-built f-string serializer could not guarantee.
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert loaded == record
+
+
+# ── Fix: provenance footer rendered into the HTML report ────────────────────
+def test_render_provenance_section(tmp_path):
+    pytest.importorskip("scanpy")  # inspect_integration imports scanpy
+    sys.path.insert(0, str(ROOT / "code"))
+    from inspect_integration import _render_provenance_section  # noqa: E402
+
+    assert _render_provenance_section(None) == ""
+    assert _render_provenance_section({}) == ""
+
+    html = _render_provenance_section({
+        "pipeline_version": 1,
+        "seed": 7,
+        "code": {"commit_short": "abc123def456", "branch": "main", "dirty": True},
+        "input": {"path": "/data/integrated.h5ad",
+                  "sha256": "a" * 64, "size_bytes": 1234},
+        "config_sha256": "b" * 64,
+        "parent_round": {"input_file": "filtered.h5ad",
+                         "commit": "deadbeef0000", "seed": 99},
+        "packages": {"scanpy": "1.10.4", "scvi-tools": "1.3.3"},
+        "generated": "2026-06-04T12:00:00",
+    })
+
+    assert "Run Provenance" in html
+    assert "abc123def456" in html
+    assert "+uncommitted changes" in html  # dirty flag surfaced
+    assert "filtered.h5ad" in html         # parent lineage surfaced
+    assert "scanpy 1.10.4" in html
+    # seed None renders as a clear "unset" label rather than a blank.
+    assert "unset" in _render_provenance_section({"seed": None})
