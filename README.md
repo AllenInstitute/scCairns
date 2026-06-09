@@ -10,6 +10,53 @@ integrate -> inspect -> edit decisions -> filter -> re-integrate
 
 The primary interface is a versioned YAML config for integration/inspection and `decisions.yaml` files for filtering decisions. CLI arguments are supported as overrides for common fields.
 
+## Workflow
+
+```mermaid
+flowchart TD
+    cfg["pipeline.yml<br/>(versioned config)"]:::cfg
+
+    subgraph INT["integrate_sns_scvi.py"]
+        direction TB
+        qc["QC filter<br/>(skippable after round 1)"] --> hvg["HVG selection<br/>(batch-aware)"]
+        hvg --> scvi["scVI training<br/>obsm['X_scVI']"]
+        scvi -.->|annotation.enabled| scanvi["scANVI annotation<br/>obsm['X_scANVI']"]
+        hvg -.->|harmony.enabled| harmony["Harmony<br/>obsm['X_pca_harmony']"]
+        scvi --> emb["neighbors → UMAP → Leiden<br/>per embedding"]
+        scanvi --> emb
+        harmony --> emb
+        emb --> bench["scIB benchmarking<br/>scVI vs Harmony vs PCA"]
+    end
+
+    INT --> integ["integrated.h5ad<br/>+ round_manifest.json<br/>+ scib_benchmark_results.csv"]:::art
+
+    subgraph INS["inspect_integration.py"]
+        direction TB
+        rpt["cluster QC + markers<br/>+ diagnostic plots"] --> flags["auto_flags.yaml<br/>(suggested removals + reasons)"]
+        flags --> html["inspection_report.html<br/>(+ Run Provenance footer)"]:::art
+    end
+
+    integ --> INS
+    html --> review{"human review"}:::dec
+    review --> dec["decisions.yaml<br/>(keep/remove + reasons)"]:::cfg
+
+    dec --> filter["apply_decisions()"]
+    filter --> filt["filtered.h5ad<br/>+ decisions_applied.yaml<br/>+ filtering_retention_summary.csv"]:::art
+    filt -->|next round| INT
+
+    cfg --> INT
+    cfg --> INS
+
+    classDef cfg fill:#e8f0fe,stroke:#4477AA;
+    classDef art fill:#eef7ee,stroke:#449944;
+    classDef dec fill:#fff3e0,stroke:#cc7a00;
+```
+
+The loop is `integrate → inspect → edit decisions → filter → re-integrate`. Every
+stage writes provenance into `round_manifest.json` (seed, git commit, input
+fingerprint, parent-round pointer), and the round's filtered output feeds the
+next round's integration.
+
 ## Main Scripts
 
 | Script | Role |
@@ -150,6 +197,12 @@ integration:
     flavor: seurat_v3
     min_batches: null
   sweep: []
+  harmony:
+    enabled: false       # run Harmony alongside scVI (single-model or sweep)
+    batch_key: null      # defaults to data.batch_key when null
+    n_pcs: 30            # PCA dimensionality Harmony corrects (>= 2)
+    hvg_from: null       # sweep mode: name a sweep entry to borrow its HVGs;
+                         # null = use integration.hvg (the default)
 
 annotation:
   enabled: false
@@ -222,6 +275,44 @@ then writes:
 
 Inspection adds annotation UMAPs, confidence distribution, label composition by
 cluster, and low-confidence cluster summaries when those columns are present.
+
+## Harmony Integration (optional)
+
+Set `integration.harmony.enabled: true` to run
+[Harmony](https://github.com/slowkow/harmonypy) alongside scVI, as an additional
+integration to compare against. It is computed on a standard log-normalized PCA
+of the HVGs and batch-corrected with `scanpy.external.pp.harmony_integrate`.
+
+| Slot | Contents |
+|---|---|
+| `.obsm["X_pca_harmony"]` | Harmony-corrected embedding |
+| `.obsm["X_umap_harmony"]` | UMAP from the Harmony embedding |
+| `.obs["leiden_harmony"]` | Leiden clusters from the Harmony embedding |
+
+The Harmony embedding flows through the same downstream stages as scVI —
+neighbors, UMAP, Leiden, and scIB benchmarking — so `scib_benchmark_results.csv`
+reports a **same-run scVI vs Harmony vs PCA** comparison with no extra steps.
+Inspection auto-resolves the Harmony keys, or pass them explicitly with
+`--latent-key X_pca_harmony --cluster-key leiden_harmony --umap-key X_umap_harmony`.
+
+**Runs in both single-model and sweep modes.** Harmony runs **once per round**,
+independent of the scVI model(s) — so in a sweep, the single Harmony embedding is
+benchmarked against *every* swept scVI architecture, which is often the most
+useful comparison. Because a sweep has no single canonical HVG set, the HVG
+source is an **explicit, recorded decision**: by default Harmony uses the
+top-level `integration.hvg` spec (identical to single-model scVI); set
+`harmony.hvg_from: <sweep_entry_name>` to borrow a specific swept architecture's
+HVG selection instead. The resolved choice (`source`, batch key, flavor, HVG
+count) is written to `round_manifest.json` under `integration.harmony`, so the
+decision is auditable rather than implicit. `hvg_from` is only valid in sweep
+mode.
+
+`batch_key` defaults to `data.batch_key` when null; `n_pcs` (default 30) sets the
+PCA dimensionality Harmony corrects. The configured `reproducibility.seed` is
+threaded into both the PCA and Harmony's internal KMeans; harmonypy is only
+partially seed-controllable, so results are deterministic on a fixed
+platform/library set but not guaranteed bit-identical across them. Requires
+`harmonypy` (pinned in the Dockerfile and `requirements.txt`).
 
 ## CLI Overrides
 

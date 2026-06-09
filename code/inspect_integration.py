@@ -407,6 +407,10 @@ def resolve_inspection_keys(adata, inspection_cfg, annotation_cfg):
     latent_candidates.extend(["X_scVI"] + [
         k for k in adata.obsm if k.startswith("X_scVI_")
     ])
+    # Harmony embedding, if present, is a valid latent space for inspection
+    # (silhouette etc.). Listed after scVI so scVI remains the default pick.
+    if "X_pca_harmony" in adata.obsm:
+        latent_candidates.append("X_pca_harmony")
     latent_key = resolve_obsm_key(
         adata, inspection_cfg.get("latent_key") or "auto",
         latent_candidates, "latent key")

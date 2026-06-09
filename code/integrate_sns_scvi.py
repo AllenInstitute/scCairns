@@ -355,6 +355,84 @@ def setup_and_train(adata_hvg, config, max_epochs=200,
     return model
 
 
+def resolve_harmony_hvg_spec(harmony_cfg, integration_cfg, configs, sweep_mode):
+    """Resolve which HVG selection Harmony should use, as an explicit record.
+
+    Returns a dict describing the HVG source and parameters. By default Harmony
+    uses the top-level ``integration.hvg`` spec (identical to single-model scVI).
+    In sweep mode, ``harmony.hvg_from`` may name a sweep entry whose HVG
+    selection Harmony borrows instead. Raises ConfigError if ``hvg_from`` does
+    not match an available sweep config. The returned ``source`` field makes the
+    choice visible in the manifest rather than implicit in the code.
+    """
+    top_hvg = integration_cfg["hvg"]
+    hvg_from = harmony_cfg.get("hvg_from")
+    if hvg_from:
+        sweep_cfg = configs.get(hvg_from) if sweep_mode else None
+        if sweep_cfg is None:
+            available = list(configs) if sweep_mode else []
+            raise ConfigError(
+                f"harmony.hvg_from='{hvg_from}' does not match a sweep config. "
+                f"Available: {available or 'none (not a sweep run)'}."
+            )
+        return {
+            "source": f"sweep:{hvg_from}",
+            "n_top_genes": top_hvg["n_top_genes"],
+            "batch_key": sweep_cfg.hvg_batch_key,
+            "flavor": sweep_cfg.hvg_flavor,
+            "min_batches": sweep_cfg.hvg_nbatches,
+        }
+    return {
+        "source": "integration.hvg",
+        "n_top_genes": top_hvg["n_top_genes"],
+        "batch_key": top_hvg["batch_key"],
+        "flavor": top_hvg["flavor"],
+        "min_batches": top_hvg.get("min_batches"),
+    }
+
+
+def run_harmony(adata_hvg, batch_key, counts_layer, n_pcs=30, seed=None):
+    """Compute a Harmony-integrated embedding from the HVG counts.
+
+    Builds a standard log-normalized PCA on the HVG subset and runs
+    ``scanpy.external.pp.harmony_integrate`` to batch-correct it, returning the
+    corrected coordinates (Scanpy stores them in obsm["X_pca_harmony"]). Works
+    on a copy so the caller's AnnData is untouched. The seed is threaded into
+    PCA and Harmony's internal KMeans for best-effort reproducibility; harmonypy
+    is only partially seed-controllable, so the result is deterministic on a
+    given platform/library set but not guaranteed bit-identical across them.
+
+    Raises ImportError (with an actionable message) if harmonypy is missing.
+    """
+    try:
+        import scanpy.external as sce  # noqa: F401
+    except ImportError as exc:  # pragma: no cover - exercised via integration
+        raise ImportError(
+            "Harmony integration requires harmonypy. Install it with "
+            "`pip install harmonypy` or add it to the environment."
+        ) from exc
+
+    tmp = adata_hvg.copy()
+    # Source from raw counts so Harmony's PCA input is independent of whatever
+    # .X currently holds.
+    tmp.X = tmp.layers[counts_layer].copy()
+    sc.pp.normalize_total(tmp)
+    sc.pp.log1p(tmp)
+    sc.pp.scale(tmp, max_value=10)
+    n_comps = min(n_pcs, tmp.n_vars - 1, tmp.n_obs - 1)
+    sc.pp.pca(tmp, n_comps=n_comps, random_state=seed if seed is not None else 0)
+
+    clean_batch_column(tmp, batch_key)
+    sce.pp.harmony_integrate(
+        tmp,
+        key=batch_key,
+        basis="X_pca",
+        adjusted_basis="X_pca_harmony",
+        random_state=seed if seed is not None else 0,
+    )
+    return tmp.obsm["X_pca_harmony"]
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Diagnostic plots
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1299,6 +1377,7 @@ Sweep config JSON format:
     embedding_keys = []
     embedding_key_by_name = {}
     model_dirs = {}
+    configs = {}
     sweep_mode = args.sweep or bool(integration_cfg.get("sweep"))
 
     if sweep_mode:
@@ -1409,6 +1488,56 @@ Sweep config JSON format:
             model_dirs["scanvi"] = scanvi_model_dir
 
         del adata_hvg; gc.collect()
+
+    # ══════════════════════════════════════════════════════════════════════
+    #  4b. Optional Harmony integration (both single-model and sweep modes)
+    # ══════════════════════════════════════════════════════════════════════
+    # Harmony runs once per round on its own HVG subset, independent of the
+    # scVI model(s). In sweep mode there is no single canonical HVG set, so the
+    # source is an EXPLICIT, recorded decision: by default Harmony uses the
+    # top-level integration.hvg spec (identical to what single-model scVI uses);
+    # set harmony.hvg_from to a sweep entry's name to borrow that architecture's
+    # HVG selection instead. Either way the resolved spec is logged to the
+    # manifest so the choice is visible, not implicit.
+    harmony_cfg = integration_cfg.get("harmony", {}) or {}
+    harmony_provenance = None
+    if harmony_cfg.get("enabled"):
+        harmony_batch_key = harmony_cfg.get("batch_key") or data_cfg["batch_key"]
+        n_pcs = harmony_cfg.get("n_pcs", 30)
+        hvg_spec = resolve_harmony_hvg_spec(
+            harmony_cfg, integration_cfg,
+            configs if sweep_mode else {}, sweep_mode,
+        )
+
+        print(f"\n  Running Harmony integration (batch_key='{harmony_batch_key}', "
+              f"n_pcs={n_pcs}, HVG source={hvg_spec['source']})...")
+        harmony_hvgs = select_hvgs(
+            adata, n_top_genes=hvg_spec["n_top_genes"],
+            batch_key=hvg_spec["batch_key"], flavor=hvg_spec["flavor"],
+            hvg_nbatches=hvg_spec["min_batches"], counts_layer=counts_layer,
+        )
+        print(f"  Harmony HVGs: {len(harmony_hvgs)}")
+        adata_harmony = adata[:, harmony_hvgs].copy()
+        adata_harmony.layers[counts_layer] = adata_harmony.X.copy()
+        harmony_emb = run_harmony(
+            adata_harmony,
+            batch_key=harmony_batch_key,
+            counts_layer=counts_layer,
+            n_pcs=n_pcs,
+            seed=applied_seed,
+        )
+        adata_full.obsm["X_pca_harmony"] = harmony_emb
+        embedding_keys.append("X_pca_harmony")
+        embedding_key_by_name["harmony"] = "X_pca_harmony"
+        harmony_provenance = {
+            "batch_key": harmony_batch_key,
+            "n_pcs": int(harmony_emb.shape[1]),
+            "n_hvgs": len(harmony_hvgs),
+            "hvg": hvg_spec,
+        }
+        print(f"  Harmony embedding stored → obsm['X_pca_harmony'] "
+              f"({harmony_emb.shape[1]} dims)")
+        del adata_harmony; gc.collect()
 
     del adata; gc.collect()
 
@@ -1555,6 +1684,7 @@ Sweep config JSON format:
             "umap_keys": umap_keys,
             "cluster_keys": leiden_keys,
             "model_dirs": model_dirs,
+            "harmony": harmony_provenance,
             "counts_layer": counts_layer,
             "package_versions": collect_package_versions(
                 [
@@ -1567,6 +1697,7 @@ Sweep config JSON format:
                     "scikit-learn",
                     "leidenalg",
                     "umap-learn",
+                    "harmonypy",
                 ]
             ),
         },

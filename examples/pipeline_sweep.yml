@@ -44,6 +44,12 @@ integration:
       hvg_batch_key: platform_origin
       hvg_flavor: seurat
       hvg_nbatches: 3
+  harmony:
+    enabled: false           # runs once per round, compared against every swept scVI
+    batch_key: null          # defaults to data.batch_key when null
+    n_pcs: 30
+    hvg_from: null            # null = use integration.hvg; or name a sweep entry
+                             # above (e.g. medium_platform_cov) to borrow its HVGs
 
 annotation:
   enabled: false

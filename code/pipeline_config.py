@@ -83,6 +83,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "min_batches": None,
         },
         "sweep": [],
+        # Optional Harmony integration run alongside scVI. Produces
+        # obsm["X_pca_harmony"] (+ X_umap_harmony / leiden_harmony), giving a
+        # same-run scVI-vs-Harmony comparison in scIB benchmarking. Runs once
+        # per round in both single-model and sweep modes. batch_key defaults to
+        # data.batch_key when null; n_pcs is the PCA dimensionality Harmony
+        # corrects. hvg_from (sweep mode only) names a sweep entry whose HVG
+        # selection Harmony should borrow; null = use the top-level
+        # integration.hvg spec (the default, identical to single-model scVI).
+        "harmony": {
+            "enabled": False,
+            "batch_key": None,
+            "n_pcs": 30,
+            "hvg_from": None,
+        },
     },
     "annotation": {
         "enabled": False,
@@ -265,6 +279,21 @@ def validate_config(config: Mapping[str, Any], *, mode: str) -> None:
         "cell_ranger",
     }:
         raise ConfigError("Invalid integration.hvg.flavor.")
+
+    harmony = config["integration"].get("harmony", {}) or {}
+    if harmony.get("enabled"):
+        n_pcs = harmony.get("n_pcs", 30)
+        if not isinstance(n_pcs, int) or n_pcs < 2:
+            raise ConfigError("integration.harmony.n_pcs must be an integer >= 2.")
+        # hvg_from is only meaningful in sweep mode (it names a sweep entry);
+        # in single-model mode Harmony always uses the top-level integration.hvg.
+        hvg_from = harmony.get("hvg_from")
+        if hvg_from and not config["integration"].get("sweep"):
+            raise ConfigError(
+                "integration.harmony.hvg_from names a sweep config entry and is "
+                "only valid in sweep mode. Leave it null for single-model runs "
+                "(Harmony uses integration.hvg)."
+            )
 
     annotation = config.get("annotation", {})
     if annotation.get("enabled"):

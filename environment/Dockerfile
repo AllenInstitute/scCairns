@@ -32,6 +32,7 @@ RUN pip install -U --no-cache-dir \
     anndata==0.11.4 \
     geoparse==2.0.4 \
     h5py==3.12.1 \
+    harmonypy==0.0.10 \
     igraph==0.11.9 \
     joblib==1.5.3 \
     jupyterlab==4.3.4 \
