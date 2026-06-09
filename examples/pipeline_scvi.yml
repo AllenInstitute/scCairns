@@ -41,6 +41,10 @@ integration:
     flavor: seurat_v3
     min_batches: null
   sweep: []
+  harmony:
+    enabled: false       # set true to also run Harmony alongside scVI
+    batch_key: null      # defaults to data.batch_key when null
+    n_pcs: 30
 
 annotation:
   enabled: false
