@@ -89,6 +89,15 @@ integration:
     - name: large_geneXcell_cell_nb
       n_hidden: 128
       n_layers: 2
+      n_latent: 24
+      dispersion: gene-cell
+      gene_likelihood: nb
+      batch_key: tech
+      categorical_covariate_keys: []
+
+    - name: Xlarge_geneXcell_cell_nb
+      n_hidden: 128
+      n_layers: 2
       n_latent: 32
       dispersion: gene-cell
       gene_likelihood: nb
