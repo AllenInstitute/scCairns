@@ -12,18 +12,18 @@ set -ex
 # upload the decisions, filter, then pass the filtered object to integrate and inspect
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
-  --input /root/capsule/data/260603_cmg_round2/integrated.h5ad \
-  --decisions /root/capsule/data/260603_cmg_round2/round2_decisions.yaml \
-  --output-dir /root/capsule/results/rounds/round_03
+  --input /root/capsule/data/260605_cmg_round3/integrated.h5ad \
+  --decisions /root/capsule/data/260605_cmg_round3/inspect_small_gene_nb/decisions_round3.yaml \
+  --output-dir /root/capsule/results/rounds/round_04
 
 python -u ./integrate_sns_scvi.py \
   --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_03/filtered.h5ad \
-  --output-dir /root/capsule/results/rounds/round_03
+  --input /root/capsule/results/rounds/round_04/filtered.h5ad \
+  --output-dir /root/capsule/results/rounds/round_04
 
 # supply the keys of the integration we want to inspect or all sweeps
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_03/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_03_sweep \
+  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
+  --output-dir /root/capsule/results/rounds/round_04_sweep \
   --all-sweep-architectures
