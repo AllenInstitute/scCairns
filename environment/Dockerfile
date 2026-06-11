@@ -20,7 +20,7 @@ RUN apt-get update \
         liblapack-dev=3.10.0-2ubuntu1 \
         libopenblas-dev=0.3.20+ds-1 \
         libpng-dev=1.6.37-3ubuntu0.5 \
-        libssl-dev=3.0.2-0ubuntu1.23 \
+        libssl-dev \
         libxml2-dev=2.9.13+dfsg-1ubuntu0.11 \
         libxslt1-dev=1.1.34-4ubuntu0.22.04.5 \
         pkg-config=0.29.2-1ubuntu3 \
