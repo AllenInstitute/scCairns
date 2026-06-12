@@ -434,7 +434,8 @@ longer overwrites the earlier record.
 `yaml.safe_dump`, so reason and query strings containing quotes, colons, or
 newlines are escaped correctly and the file round-trips through `yaml.safe_load`.
 
-For sweep outputs, inspect every complete architecture key triplet in one call:
+For sweep outputs, inspect every complete architecture key triplet in one call.
+If Harmony keys are present, this also creates an `inspect_harmony/` report:
 
 ```bash
 python code/inspect_integration.py \
@@ -444,9 +445,10 @@ python code/inspect_integration.py \
   --all-sweep-architectures
 ```
 
-This writes one report directory per architecture, for example
-`rounds/round_02_sweep/inspect_small_gene_nb/`. Filtering with `--decisions`
-still uses a single selected cluster key and cannot be combined with
+This writes one report directory per architecture or embedding, for example
+`rounds/round_02_sweep/inspect_small_gene_nb/` and
+`rounds/round_02_sweep/inspect_harmony/`. Filtering with `--decisions` still
+uses a single selected cluster key and cannot be combined with
 `--all-sweep-architectures`.
 
 ## Notes

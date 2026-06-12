@@ -110,3 +110,48 @@ def test_find_sweep_architecture_keys_uses_config_order():
     assert [run["name"] for run in runs] == ["medium", "small"]
     assert runs[0]["cluster_key"] == "leiden_medium"
     assert runs[1]["latent_key"] == "X_scVI_small"
+
+
+def test_find_sweep_architecture_keys_includes_harmony():
+    adata = _adata()
+    for name in ["small", "medium"]:
+        adata.obs[f"leiden_{name}"] = pd.Categorical(["0", "0", "1", "1"])
+        adata.obsm[f"X_scVI_{name}"] = np.ones((4, 2))
+        adata.obsm[f"X_umap_{name}"] = np.ones((4, 2))
+    adata.obs["leiden_harmony"] = pd.Categorical(["0", "0", "1", "1"])
+    adata.obsm["X_pca_harmony"] = np.ones((4, 3))
+    adata.obsm["X_umap_harmony"] = np.ones((4, 2))
+
+    config = {
+        "integration": {
+            "sweep": [
+                {"name": "medium"},
+                {"name": "small"},
+            ]
+        }
+    }
+
+    runs = find_sweep_architecture_keys(adata, config)
+
+    assert [run["name"] for run in runs] == ["medium", "small", "harmony"]
+    assert runs[-1]["cluster_key"] == "leiden_harmony"
+    assert runs[-1]["latent_key"] == "X_pca_harmony"
+    assert runs[-1]["umap_key"] == "X_umap_harmony"
+
+
+def test_find_sweep_architecture_keys_allows_harmony_only():
+    adata = _adata()
+    adata.obs["leiden_harmony"] = pd.Categorical(["0", "0", "1", "1"])
+    adata.obsm["X_pca_harmony"] = np.ones((4, 3))
+    adata.obsm["X_umap_harmony"] = np.ones((4, 2))
+
+    runs = find_sweep_architecture_keys(adata, {"integration": {}})
+
+    assert runs == [
+        {
+            "name": "harmony",
+            "cluster_key": "leiden_harmony",
+            "latent_key": "X_pca_harmony",
+            "umap_key": "X_umap_harmony",
+        }
+    ]
