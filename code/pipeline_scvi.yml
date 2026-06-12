@@ -103,6 +103,12 @@ integration:
       gene_likelihood: nb
       batch_key: tech
       categorical_covariate_keys: []
+  harmony:
+    enabled: true       # run Harmony alongside scVI (single-model or sweep)
+    batch_key: null      # defaults to data.batch_key when null
+    n_pcs: 30            # PCA dimensionality Harmony corrects (>= 2)
+    hvg_from: null       # sweep mode: name a sweep entry to borrow its HVGs;
+
 
 annotation:
   enabled: false
