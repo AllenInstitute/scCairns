@@ -438,7 +438,7 @@ def _sweep_names_from_config(config):
 
 
 def find_sweep_architecture_keys(adata, config):
-    """Return complete key triplets for each sweep architecture in an AnnData."""
+    """Return complete key triplets for sweep architectures and Harmony."""
     names = _sweep_names_from_config(config)
     if not names:
         names = sorted(
@@ -474,10 +474,28 @@ def find_sweep_architecture_keys(adata, config):
             f"{', '.join(missing)}"
         )
 
+    harmony_keys = {
+        "name": "harmony",
+        "cluster_key": "leiden_harmony",
+        "latent_key": "X_pca_harmony",
+        "umap_key": "X_umap_harmony",
+    }
+    harmony_missing = []
+    if harmony_keys["cluster_key"] not in adata.obs.columns:
+        harmony_missing.append(harmony_keys["cluster_key"])
+    if harmony_keys["latent_key"] not in adata.obsm:
+        harmony_missing.append(harmony_keys["latent_key"])
+    if harmony_keys["umap_key"] not in adata.obsm:
+        harmony_missing.append(harmony_keys["umap_key"])
+    if not harmony_missing:
+        architectures.append(harmony_keys)
+
     if not architectures:
         raise ValueError(
-            "No complete sweep architectures found. Expected matching "
-            "leiden_<name>, X_scVI_<name>, and X_umap_<name> keys."
+            "No complete sweep architectures or Harmony embedding found. "
+            "Expected matching leiden_<name>, X_scVI_<name>, and "
+            "X_umap_<name> keys, or leiden_harmony, X_pca_harmony, and "
+            "X_umap_harmony keys."
         )
 
     return architectures
@@ -1867,14 +1885,15 @@ Typical iterative cycle:
                              "h5ad if omitted.")
     parser.add_argument("--latent-key", default=None,
                         help="Obsm key for latent space, used for latent "
-                             "silhouette (default: auto-detect 'X_scVI' or first "
-                             "'X_scVI_*').")
+                             "silhouette (default: auto-detect 'X_scVI', first "
+                             "'X_scVI_*', or Harmony when no scVI key exists).")
     parser.add_argument("--umap-key", default=None,
                         help="Obsm key for UMAP (default: auto-detect).")
     parser.add_argument("--all-sweep-architectures", action="store_true",
                         help="Generate one inspection report for every complete "
-                             "sweep architecture key triplet. Reports are "
-                             "written to output-dir/inspect_<name>/.")
+                             "sweep architecture key triplet, plus Harmony when "
+                             "present. Reports are written to "
+                             "output-dir/inspect_<name>/.")
 
     # ── Markers ──
     parser.add_argument("--markers", default=None,
@@ -1993,7 +2012,7 @@ Typical iterative cycle:
 
     if args.all_sweep_architectures:
         inspection_runs = find_sweep_architecture_keys(adata, config)
-        print(f"  Found {len(inspection_runs)} complete sweep architecture(s).")
+        print(f"  Found {len(inspection_runs)} complete inspection run(s).")
     else:
         try:
             cluster_key, latent_key, umap_key = resolve_inspection_keys(
