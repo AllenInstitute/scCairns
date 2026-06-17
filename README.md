@@ -476,15 +476,32 @@ its filtering was performed on.
 
 ## Summarizing a completed set of rounds
 
-After running several rounds, combine every `round_manifest.json` into one view:
+After running several rounds, combine every `round_manifest.json` into one view.
+Either point at a parent directory of `round_*` subdirectories:
 
 ```bash
 python code/summarize_rounds.py --rounds-dir results/rounds --verify
 ```
+...or pass an explicit, ordered list of round directories. Use this when rounds
+are archived under arbitrary names/locations — e.g., CodeOcean overwrites
+`/results` each run, so rounds are copied out to an S3 mount as
+`data/260603_cmg_round1`, `data/260605_cmg_round3`, etc.:
 
-It discovers each round, orders them by their recorded lineage (the
-`parent_round` pointers), and writes to
-`results/rounds/summary/`:
+```bash
+python code/summarize_rounds.py \
+  --rounds data/260603_cmg_round1 data/260603_cmg_round2 data/260605_cmg_round3 \
+  --output-dir results/summary --verify
+```
+
+In discovery mode rounds are ordered by their recorded lineage (the
+`parent_round` pointers). With `--rounds`, the **supplied order is taken as the
+lineage** whenever those pointers can't be resolved — their run-time absolute
+paths no longer exist after archiving. Lineage-continuity verification still
+works either way: it hashes each parent's `integrated.h5ad` *as it sits on disk
+now* and compares it to the child's recorded input fingerprint. Each `--rounds`
+item may be a round directory or a `round_manifest.json` path. Outputs go to the
+output directory (default `<rounds-dir>/summary`, or `./round_summary` with
+`--rounds`):
 
 | Output | Contents |
 |---|---|
