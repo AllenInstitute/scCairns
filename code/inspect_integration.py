@@ -393,8 +393,11 @@ def resolve_obsm_key(adata, explicit_key, candidates, key_label):
 def resolve_inspection_keys(adata, inspection_cfg, annotation_cfg):
     """Resolve cluster, latent, and UMAP keys for one inspection run."""
     cluster_setting = inspection_cfg.get("cluster_key") or "auto"
+    # 'leiden_proxy' is an internal benchmarking artifact, not an integration
+    # variant — never offer it as an auto cluster key.
     cluster_candidates = ["leiden"] + [
-        c for c in adata.obs.columns if c.startswith("leiden_")
+        c for c in adata.obs.columns
+        if c.startswith("leiden_") and c != "leiden_proxy"
     ]
     cluster_key = resolve_obs_key(
         adata, cluster_setting, cluster_candidates, "cluster key")
@@ -443,6 +446,29 @@ def variant_name_from_cluster_key(cluster_key):
     if cluster_key.startswith("leiden_"):
         return cluster_key[len("leiden_"):]
     return cluster_key
+
+
+def embedding_keys_for_cluster_key(adata, cluster_key):
+    """Best-effort (latent_key, umap_key) matching a variant's cluster key.
+
+    A ``leiden_<variant>`` cluster key was computed on the ``X_scVI_<variant>``
+    latent and plotted on ``X_umap_<variant>``; this returns those companions so
+    that selecting a variant by cluster key alone still yields a self-consistent
+    triplet. Each key is returned only when present in ``adata.obsm`` (else
+    None), so callers can fall back to auto-resolution.
+    """
+    variant = variant_name_from_cluster_key(cluster_key)
+    if variant == "harmony":
+        latent, umap = "X_pca_harmony", "X_umap_harmony"
+    elif variant == "scanvi":
+        latent, umap = "X_scANVI", "X_umap_scanvi"
+    elif variant in (None, "default"):
+        latent, umap = "X_scVI", "X_umap"
+    else:
+        latent, umap = f"X_scVI_{variant}", f"X_umap_{variant}"
+    latent = latent if latent in adata.obsm else None
+    umap = umap if umap in adata.obsm else None
+    return latent, umap
 
 
 def _sweep_names_from_config(config):
@@ -2087,6 +2113,18 @@ Typical iterative cycle:
                   f"{declared_variant.get('variant', '?')} "
                   f"(cluster_key={declared_variant.get('cluster_key', '?')})")
 
+    # When a specific variant cluster key is chosen (via CLI or the declared
+    # block) but latent/UMAP keys weren't given, derive the matching companions
+    # so the report and the recorded filtered_on describe one architecture
+    # rather than mixing the chosen clusters with the default X_scVI/X_umap.
+    chosen_cluster = args.cluster_key or declared_variant.get("cluster_key")
+    if chosen_cluster and chosen_cluster != "auto":
+        lat, um = embedding_keys_for_cluster_key(adata, chosen_cluster)
+        if inspection_cfg.get("latent_key") in (None, "auto") and lat:
+            inspection_cfg["latent_key"] = lat
+        if inspection_cfg.get("umap_key") in (None, "auto") and um:
+            inspection_cfg["umap_key"] = um
+
     if args.all_sweep_architectures:
         inspection_runs = find_sweep_architecture_keys(adata, config)
         print(f"  Found {len(inspection_runs)} complete inspection run(s).")
@@ -2114,7 +2152,8 @@ Typical iterative cycle:
 
             cluster_candidates = (
                 (["leiden"] if "leiden" in adata.obs.columns else [])
-                + [c for c in adata.obs.columns if c.startswith("leiden_")]
+                + [c for c in adata.obs.columns
+                   if c.startswith("leiden_") and c != "leiden_proxy"]
             )
             if filter_source == "auto" and len(cluster_candidates) > 1:
                 print(
