@@ -17,6 +17,8 @@ from inspect_integration import (  # noqa: E402
     apply_decisions,
     cluster_qc_summary,
     find_sweep_architecture_keys,
+    variant_name_from_cluster_key,
+    write_auto_flags_yaml,
 )
 
 
@@ -54,6 +56,63 @@ def test_apply_decisions_filters_valid_query(tmp_path):
     ].iloc[0]
     assert batch_b["pre_filter_cells"] == 2
     assert batch_b["post_filter_cells"] == 1
+
+
+def test_variant_name_from_cluster_key():
+    assert variant_name_from_cluster_key("leiden") == "default"
+    assert variant_name_from_cluster_key("leiden_small_gene_nb") == "small_gene_nb"
+    assert variant_name_from_cluster_key("leiden_harmony") == "harmony"
+    assert variant_name_from_cluster_key(None) is None
+
+
+def test_auto_flags_records_integration_variant(tmp_path):
+    import yaml
+
+    summary = pd.DataFrame({"n_cells": [120, 80]}, index=["3", "7"])
+    out = tmp_path / "auto_flags.yaml"
+    write_auto_flags_yaml(
+        {"7": ["high mt"]},
+        summary,
+        str(out),
+        {"mt": 15, "min_genes": 400, "min_cells": 20, "single_batch": 0.9},
+        integration={
+            "variant": "small_gene_nb",
+            "cluster_key": "leiden_small_gene_nb",
+            "latent_key": "X_scVI_small_gene_nb",
+            "umap_key": "X_umap_small_gene_nb",
+        },
+    )
+    parsed = yaml.safe_load(out.read_text())
+    assert parsed["integration"]["variant"] == "small_gene_nb"
+    assert parsed["integration"]["cluster_key"] == "leiden_small_gene_nb"
+    assert parsed["integration"]["latent_key"] == "X_scVI_small_gene_nb"
+    # The block must not disturb the rest of the editable template.
+    assert parsed["remove_clusters"][0]["cluster"] == "7"
+
+
+def test_apply_decisions_records_filtered_on(tmp_path):
+    import json
+
+    adata = _adata()
+    adata.obs["leiden_small_gene_nb"] = pd.Categorical(["0", "0", "7", "7"])
+    filtered_on = {
+        "variant": "small_gene_nb",
+        "cluster_key": "leiden_small_gene_nb",
+        "latent_key": "X_scVI_small_gene_nb",
+        "umap_key": "X_umap_small_gene_nb",
+        "source": "decisions_file",
+    }
+    apply_decisions(
+        adata,
+        {"remove_clusters": [{"cluster": "7", "reasons": ["test"]}]},
+        cluster_key="leiden_small_gene_nb",
+        batch_key="data_origin",
+        output_dir=str(tmp_path),
+        filtered_on=filtered_on,
+    )
+    manifest = json.loads((tmp_path / "round_manifest.json").read_text())
+    assert manifest["decisions"]["filtered_on"] == filtered_on
+    assert manifest["decisions"]["cluster_key"] == "leiden_small_gene_nb"
 
 
 def test_apply_decisions_raises_on_invalid_query(tmp_path):

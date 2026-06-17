@@ -428,6 +428,23 @@ def resolve_inspection_keys(adata, inspection_cfg, annotation_cfg):
     return cluster_key, latent_key, umap_key
 
 
+def variant_name_from_cluster_key(cluster_key):
+    """Map a Leiden obs key back to its integration-variant name.
+
+    Sweep mode names clusters ``leiden_<variant>`` (one independent clustering
+    per scVI architecture); single-model mode uses bare ``leiden`` (the
+    'default' architecture). Returns the variant label that ties a filtering
+    decision to the embedding/architecture its cluster IDs were computed on.
+    """
+    if not cluster_key:
+        return None
+    if cluster_key == "leiden":
+        return "default"
+    if cluster_key.startswith("leiden_"):
+        return cluster_key[len("leiden_"):]
+    return cluster_key
+
+
 def _sweep_names_from_config(config):
     sweep = config.get("integration", {}).get("sweep") or []
     if isinstance(sweep, list):
@@ -957,8 +974,16 @@ def identify_neuronal_clusters(fraction_table, markers, cutoff=0.50):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def write_auto_flags_yaml(flags, summary_df, output_path, thresholds,
-                           neuronal_clusters=None):
-    """Write auto-flagged clusters to a YAML template the user can edit."""
+                           neuronal_clusters=None, integration=None):
+    """Write auto-flagged clusters to a YAML template the user can edit.
+
+    ``integration`` (optional) records WHICH integration variant — i.e. which
+    scVI architecture's clusters/embedding — these flags were generated against.
+    The block is written into the file so that when the user renames it to
+    ``decisions.yaml``, the variant travels with the decisions and the filter is
+    applied on the SAME clustering, instead of whatever ``--cluster-key``/``auto``
+    happens to resolve at apply-time.
+    """
     lines = [
         "# ──────────────────────────────────────────────────────────────────",
         "# Auto-generated cluster flags — edit this file to create your",
@@ -977,13 +1002,34 @@ def write_auto_flags_yaml(flags, summary_df, output_path, thresholds,
         "",
         f"generated: \"{datetime.now().isoformat()}\"",
         "",
+    ]
+
+    if integration:
+        lines.extend([
+            "# ── Integration variant these flags were generated against ─────────",
+            "# Records WHICH sweep architecture's clusters/embedding produced these",
+            "# flags. This block travels with the file when you rename it to",
+            "# decisions.yaml, so apply_decisions filters against the SAME variant",
+            "# instead of whatever --cluster-key/auto resolves. Change 'variant'",
+            "# (and the *_key fields) to filter on a different architecture.",
+            "integration:",
+            f"  variant: \"{integration['variant']}\"",
+            f"  cluster_key: \"{integration['cluster_key']}\"",
+        ])
+        if integration.get("latent_key"):
+            lines.append(f"  latent_key: \"{integration['latent_key']}\"")
+        if integration.get("umap_key"):
+            lines.append(f"  umap_key: \"{integration['umap_key']}\"")
+        lines.append("")
+
+    lines.extend([
         "thresholds:",
         f"  mt_pct: {thresholds['mt']}",
         f"  min_genes: {thresholds['min_genes']}",
         f"  min_cells: {thresholds['min_cells']}",
         f"  single_batch_frac: {thresholds['single_batch']}",
         "",
-    ]
+    ])
 
     if flags:
         lines.append("remove_clusters:")
@@ -1445,7 +1491,13 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         flags, summary,
         os.path.join(output_dir, "auto_flags.yaml"),
         thresholds,
-        neuronal_clusters=neuronal_clusters)
+        neuronal_clusters=neuronal_clusters,
+        integration={
+            "variant": variant_name_from_cluster_key(cluster_key),
+            "cluster_key": cluster_key,
+            "latent_key": latent_key,
+            "umap_key": umap_key,
+        })
     print("  Saved auto_flags.yaml")
 
     # 5. Plots
@@ -1653,7 +1705,8 @@ def write_filtering_retention_summary(adata, keep, output_dir, cluster_key=None,
 
 def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
                     output_dir=".", ignore_failed_queries=False,
-                    input_path=None, seed=None, decisions_path=None):
+                    input_path=None, seed=None, decisions_path=None,
+                    filtered_on=None):
     """Apply a decisions dict to filter an AnnData.
 
     Order of operations:
@@ -1806,6 +1859,7 @@ def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
         "decisions_file": decisions_path,
         "decisions_fingerprint": fingerprint_file(decisions_path),
         "cluster_key": cluster_key,
+        "filtered_on": filtered_on,
         "input_cells": n_before,
         "output_cells": n_after,
         "removed": n_total_removed,
@@ -2010,6 +2064,29 @@ Typical iterative cycle:
     config["data"]["batch_key"] = batch_key
     config["data"]["categorical_covariate_keys"] = covariate_keys
 
+    # When filtering, let the decisions file declare which integration variant
+    # its cluster IDs refer to, so the variant is explicit in the record rather
+    # than implied by --cluster-key/auto or by where the file was placed. CLI
+    # flags still win (explicit user override); the declared block fills in only
+    # what the CLI left unset.
+    decisions = None
+    declared_variant = {}
+    if args.decisions:
+        decisions = load_decisions(args.decisions)
+        print(f"  Loaded {args.decisions}")
+        if isinstance(decisions, dict):
+            declared_variant = decisions.get("integration") or {}
+        if declared_variant:
+            if args.cluster_key is None and declared_variant.get("cluster_key"):
+                inspection_cfg["cluster_key"] = declared_variant["cluster_key"]
+            if args.latent_key is None and declared_variant.get("latent_key"):
+                inspection_cfg["latent_key"] = declared_variant["latent_key"]
+            if args.umap_key is None and declared_variant.get("umap_key"):
+                inspection_cfg["umap_key"] = declared_variant["umap_key"]
+            print(f"  Decisions file declares integration variant: "
+                  f"{declared_variant.get('variant', '?')} "
+                  f"(cluster_key={declared_variant.get('cluster_key', '?')})")
+
     if args.all_sweep_architectures:
         inspection_runs = find_sweep_architecture_keys(adata, config)
         print(f"  Found {len(inspection_runs)} complete inspection run(s).")
@@ -2021,6 +2098,36 @@ Typical iterative cycle:
         except ValueError as e:
             print(f"  [ERROR] {e}")
             return
+
+        # In filter mode, determine how the variant was chosen and refuse to
+        # silently guess when multiple variants exist and nothing pinned one.
+        if args.decisions:
+            if args.cluster_key is not None:
+                filter_source = "cli"
+            elif declared_variant.get("cluster_key"):
+                filter_source = "decisions_file"
+            elif inspection_cfg.get("cluster_key") and \
+                    inspection_cfg.get("cluster_key") != "auto":
+                filter_source = "config"
+            else:
+                filter_source = "auto"
+
+            cluster_candidates = (
+                (["leiden"] if "leiden" in adata.obs.columns else [])
+                + [c for c in adata.obs.columns if c.startswith("leiden_")]
+            )
+            if filter_source == "auto" and len(cluster_candidates) > 1:
+                print(
+                    "  [ERROR] Multiple integration variants are present "
+                    f"({', '.join(cluster_candidates)}).\n"
+                    "          Refusing to guess which one to filter on. Make "
+                    "the choice explicit by either:\n"
+                    "            • adding an 'integration:' block to your "
+                    "decisions.yaml (auto_flags.yaml now emits one), or\n"
+                    "            • passing --cluster-key leiden_<variant>."
+                )
+                return
+
         print(f"  Cluster key: {cluster_key}")
         print(f"  Latent key: {latent_key or 'none (silhouette disabled)'}")
         print(f"  UMAP key: {umap_key or 'none'}")
@@ -2083,8 +2190,16 @@ Typical iterative cycle:
         print(f"\n{'='*60}")
         print("APPLYING DECISIONS")
         print(f"{'='*60}")
-        decisions = load_decisions(args.decisions)
-        print(f"  Loaded {args.decisions}")
+        # decisions was preloaded above (to read its declared variant block).
+        filtered_on = {
+            "variant": variant_name_from_cluster_key(cluster_key),
+            "cluster_key": cluster_key,
+            "latent_key": latent_key,
+            "umap_key": umap_key,
+            "source": filter_source,
+        }
+        print(f"  Filtering on variant '{filtered_on['variant']}' "
+              f"(cluster_key={cluster_key}, source={filter_source})")
         apply_decisions(adata, decisions, cluster_key=cluster_key,
                         batch_key=batch_key,
                         output_dir=output_dir,
@@ -2092,7 +2207,8 @@ Typical iterative cycle:
                             "ignore_failed_queries", False),
                         input_path=input_path,
                         seed=applied_seed,
-                        decisions_path=args.decisions)
+                        decisions_path=args.decisions,
+                        filtered_on=filtered_on)
 
     print(f"\n{'='*60}")
     print(f"  Done. Outputs in {output_dir}/")
