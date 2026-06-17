@@ -469,6 +469,26 @@ choice explicit and recorded rather than implied by directory placement:
   **errors out** instead of silently guessing — declare the variant in
   `decisions.yaml` or pass `--cluster-key leiden_<variant>`.
 
+Either pin the variant inline with `--cluster-key`:
+
+```bash
+python code/inspect_integration.py \
+  --config pipeline.yml \
+  --input rounds/round_03/integrated.h5ad \
+  --decisions rounds/round_03/decisions.yaml \
+  --cluster-key leiden_small_gene_nb \
+  --output-dir rounds/round_04
+```
+
+…or declare it once at the top of `decisions.yaml` (only `cluster_key` is
+required — the matching `latent_key`/`umap_key` are derived automatically):
+
+```yaml
+integration:
+  variant: "small_gene_nb"
+  cluster_key: "leiden_small_gene_nb"
+```
+
 The variant actually used is recorded in `round_manifest.json` under
 `decisions.filtered_on` (`variant`, `cluster_key`, `latent_key`, `umap_key`,
 and `source` = how it was chosen), so every round documents which architecture

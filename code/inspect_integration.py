@@ -27,6 +27,14 @@ Modes
       --decisions rounds/round_01/decisions.yaml \
       --output-dir rounds/round_02/ --report
 
+  # Sweep run: pin which architecture's clusters to filter on with --cluster-key
+  # (or declare an 'integration:' block in decisions.yaml). Required when the
+  # object holds more than one leiden_<variant> clustering.
+  python inspect_integration.py --input integrated.h5ad \
+      --decisions rounds/round_01/decisions.yaml \
+      --cluster-key leiden_small_gene_nb \
+      --output-dir rounds/round_02/
+
 Output
 ------
   Report mode:
@@ -1922,6 +1930,14 @@ Examples:
   # Apply decisions and export filtered data
   python inspect_integration.py --input integrated.h5ad \\
       --decisions rounds/round_01/decisions.yaml \\
+      --output-dir rounds/round_02/
+
+  # Sweep run: filter on a specific architecture's clusters. Either declare an
+  # 'integration:' block in decisions.yaml (auto_flags.yaml emits one) or pin it
+  # here with --cluster-key. Matching latent/UMAP keys are derived automatically.
+  python inspect_integration.py --input integrated.h5ad \\
+      --decisions rounds/round_01/decisions.yaml \\
+      --cluster-key leiden_small_gene_nb \\
       --output-dir rounds/round_02/
 
   # Custom marker genes (JSON: {"group": ["Gene1", "Gene2"]})
