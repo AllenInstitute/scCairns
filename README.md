@@ -64,6 +64,7 @@ next round's integration.
 | `code/integrate_sns_scvi.py` | QC, HVG selection, scVI training, optional scANVI annotation, UMAP/leiden, benchmarking, integrated h5ad output |
 | `code/inspect_integration.py` | Integration report, cluster QC, marker/annotation diagnostics, auto flags, decisions-based filtering |
 | `code/pipeline_config.py` | Shared V1 config defaults, validation, and provenance helpers |
+| `code/summarize_rounds.py` | Cross-round summary: combines every `round_manifest.json` into a table, decisions ledger, Mermaid lineage diagram, and (optional) integrity report |
 | `code/04_visualize.py` | Legacy plotting script; label-transfer plots are now handled by inspection when annotation columns exist |
 
 ## Quick Start
@@ -450,6 +451,55 @@ This writes one report directory per architecture or embedding, for example
 `rounds/round_02_sweep/inspect_harmony/`. Filtering with `--decisions` still
 uses a single selected cluster key and cannot be combined with
 `--all-sweep-architectures`.
+
+### Selecting which sweep variant to filter on
+
+In a sweep, Leiden clusters are computed **independently per scVI architecture**
+(`leiden_<variant>` on `X_scVI_<variant>`), so a filtering decision is only
+meaningful against the specific variant its cluster IDs came from. To keep that
+choice explicit and recorded rather than implied by directory placement:
+
+- Each `auto_flags.yaml` carries an `integration:` block naming the variant
+  and the `cluster_key`/`latent_key`/`umap_key` the flags were generated against.
+  When you rename the file to `decisions.yaml`, that block travels with it, so
+  `apply_decisions` filters on the **same** variant.
+- The selection precedence is `--cluster-key` (CLI) > the decisions file's
+  `integration:` block > config `inspection.cluster_key` > `auto`.
+- In filter mode, if multiple variants are present and nothing pins one, the run
+  **errors out** instead of silently guessing — declare the variant in
+  `decisions.yaml` or pass `--cluster-key leiden_<variant>`.
+
+The variant actually used is recorded in `round_manifest.json` under
+`decisions.filtered_on` (`variant`, `cluster_key`, `latent_key`, `umap_key`,
+and `source` = how it was chosen), so every round documents which architecture
+its filtering was performed on.
+
+## Summarizing a completed set of rounds
+
+After running several rounds, combine every `round_manifest.json` into one view:
+
+```bash
+python code/summarize_rounds.py --rounds-dir results/rounds --verify
+```
+
+It discovers each round, orders them by their recorded lineage (the
+`parent_round` pointers), and writes to
+`results/rounds/summary/`:
+
+| Output | Contents |
+|---|---|
+| `pipeline_summary.md` / `.html` | Round table + Mermaid lineage + integrity findings |
+| `rounds_table.csv` | One row per round (cells, clusters, seed, commit, filtered-on variant, scIB selected vs best) |
+| `decisions_ledger.csv` | Every keep/remove action across all rounds, with the variant it was applied on |
+| `lineage.mmd` | Raw Mermaid lineage diagram (embeddable in a README or PR) |
+| `pipeline_summary.json` | Full merged record + verification verdicts |
+
+`--verify` adds integrity checks: round-to-round input-hash continuity, seed
+drift, code-commit/dirty-tree drift, package-version drift, and any filtering
+whose variant was chosen by `auto` (ambiguous). `--strict` exits non-zero when a
+check raises an error, so the summary can gate CI. The scIB columns compare the
+**selected** variant's score against the round's **best** scoring variant, so a
+round filtered on a non-top architecture is visible at a glance.
 
 ## Notes
 
