@@ -27,3 +27,7 @@ python -u ./inspect_integration.py \
   --input /root/capsule/results/rounds/round_04/integrated.h5ad \
   --output-dir /root/capsule/results/rounds/round_04_sweep \
   --all-sweep-architectures
+
+# summarize rounds
+python -u ./summarize_rounds.py \
+  --rounds-dir data/260603_cmg_round1 data/260603_cmg_round2 data/260605_cmg_round3 results/rounds
