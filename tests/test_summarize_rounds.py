@@ -74,28 +74,54 @@ def _round2(rounds: Path, integ_path: Path, *, variant="big_zinb",
     })
 
 
+def _load_ordered(tmp_path):
+    manifests = [sr.load_manifest(str(p)) for p in
+                 sorted(tmp_path.glob("*/round_manifest.json"))]
+    parent_map = sr.build_parent_map(manifests)
+    return sr.order_by_lineage(manifests, parent_map), parent_map
+
+
 def test_lineage_ordering_and_edges(tmp_path):
     integ = _round1(tmp_path)
     _round2(tmp_path, integ)
-    manifests = sr.order_by_lineage(
-        [sr.load_manifest(str(p)) for p in
-         sorted(tmp_path.glob("*/round_manifest.json"))])
+    manifests, parent_map = _load_ordered(tmp_path)
     assert [m["_round_id"] for m in manifests] == ["round_01", "round_02"]
 
-    by_dir = {m["_dir"]: m for m in manifests}
     by_id = {m["_round_id"]: m for m in manifests}
     child = by_id["round_02"]
-    parent_dir = sr._resolve_parent(child, by_dir, by_id)
-    assert parent_dir == by_id["round_01"]["_dir"]
+    assert parent_map[child["_dir"]] == by_id["round_01"]["_dir"]
+
+
+def test_explicit_order_sequential_fallback(tmp_path):
+    # Archived rounds: parent pointer references a path/name not in the set,
+    # so lineage must fall back to the supplied order.
+    _round1(tmp_path)
+    integ_missing = tmp_path / "round_01" / "integrated.h5ad"
+    _round2(tmp_path, integ_missing)
+    # Rename round dirs to arbitrary archive names and rewrite parent pointer
+    # to a now-nonexistent location to defeat realpath + basename matching.
+    a = tmp_path / "260603_cmg_round1"
+    b = tmp_path / "260605_cmg_round3"
+    (tmp_path / "round_01").rename(a)
+    (tmp_path / "round_02").rename(b)
+    mb = json.loads((b / "round_manifest.json").read_text())
+    mb["decisions"]["parent_round"] = {"output_dir": "/gone/round_xyz"}
+    mb["decisions"]["input_h5ad"] = "/gone/round_xyz/integrated.h5ad"
+    (b / "round_manifest.json").write_text(json.dumps(mb))
+
+    manifests = [sr.load_manifest(str(a / "round_manifest.json")),
+                 sr.load_manifest(str(b / "round_manifest.json"))]
+    order = [m["_dir"] for m in manifests]
+    parent_map = sr.build_parent_map(manifests, explicit_order=order)
+    assert parent_map[manifests[1]["_dir"]] == manifests[0]["_dir"]
+    # Without the explicit order, the broken pointer resolves to nothing.
+    assert sr.build_parent_map(manifests)[manifests[1]["_dir"]] is None
 
 
 def test_scib_selected_vs_best_from_parent(tmp_path):
     integ = _round1(tmp_path)
     _round2(tmp_path, integ, variant="big_zinb")  # non-top variant
-    manifests = sr.order_by_lineage(
-        [sr.load_manifest(str(p)) for p in
-         sorted(tmp_path.glob("*/round_manifest.json"))])
-    by_dir = {m["_dir"]: m for m in manifests}
+    manifests, parent_map = _load_ordered(tmp_path)
     by_id = {m["_round_id"]: m for m in manifests}
 
     parent = by_id["round_01"]
@@ -117,12 +143,10 @@ def test_scib_selected_vs_best_from_parent(tmp_path):
 def test_verify_flags_drift_and_changed_input(tmp_path):
     integ = _round1(tmp_path)
     _round2(tmp_path, integ, source="auto", input_sha="0" * 64)  # wrong hash
-    manifests = sr.order_by_lineage(
-        [sr.load_manifest(str(p)) for p in
-         sorted(tmp_path.glob("*/round_manifest.json"))])
-    findings = sr.verify(manifests, str(tmp_path))
+    manifests, parent_map = _load_ordered(tmp_path)
+    findings = sr.verify(manifests, parent_map, scan_dir=str(tmp_path))
     checks = {f["check"] for f in findings}
-    assert "input_changed" in checks            # recorded sha no longer matches
+    assert "input_changed" in checks            # parent's file ≠ recorded sha
     assert "auto_variant" in checks             # ambiguous selection
     severities = {f["check"]: f["severity"] for f in findings}
     assert severities["input_changed"] == "error"
@@ -131,8 +155,6 @@ def test_verify_flags_drift_and_changed_input(tmp_path):
 def test_clean_run_has_no_findings(tmp_path):
     integ = _round1(tmp_path)
     _round2(tmp_path, integ)
-    manifests = sr.order_by_lineage(
-        [sr.load_manifest(str(p)) for p in
-         sorted(tmp_path.glob("*/round_manifest.json"))])
-    findings = sr.verify(manifests, str(tmp_path))
+    manifests, parent_map = _load_ordered(tmp_path)
+    findings = sr.verify(manifests, parent_map, scan_dir=str(tmp_path))
     assert findings == []

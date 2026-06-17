@@ -98,37 +98,56 @@ def _parent_dir_of(manifest: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _resolve_parent(manifest: Dict[str, Any], by_dir: Dict[str, Any],
-                    by_id: Dict[str, Any]) -> Optional[str]:
-    """Parent round's _dir, matched by realpath then by round-id basename.
+def build_parent_map(manifests: List[Dict[str, Any]],
+                     explicit_order: Optional[List[str]] = None
+                     ) -> Dict[str, Optional[str]]:
+    """Map each round's _dir to its parent round's _dir.
 
-    The basename fallback keeps lineage intact when a round set is relocated
-    after the run (the recorded abspaths no longer exist, but the directory
-    names still chain).
+    Resolution order:
+      1. the recorded ``parent_round`` pointer, matched by realpath;
+      2. failing that, by round-id basename (set was moved but names still chain);
+      3. failing that — only when rounds were supplied as an explicit ordered
+         list (``--rounds``) — the previous item in that list.
+
+    Step 3 is what makes archived round sets work: after CodeOcean overwrites
+    ``/results`` and rounds are copied to S3/data under new names, the abspaths
+    and round-ids captured at run time no longer match, so the user-supplied
+    order is the only reliable lineage signal.
     """
-    parent_dir = _parent_dir_of(manifest)
-    if parent_dir is None:
-        return None
-    if parent_dir in by_dir:
-        return parent_dir
-    sibling = by_id.get(os.path.basename(parent_dir))
-    if sibling is not None and sibling["_dir"] != manifest["_dir"]:
-        return sibling["_dir"]
-    return None
-
-
-def order_by_lineage(manifests: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Topologically order rounds parent-before-child; ties broken by name."""
     by_dir = {m["_dir"]: m for m in manifests}
     by_id = {m["_round_id"]: m for m in manifests}
+    order = explicit_order or []
+    pos = {d: i for i, d in enumerate(order)}
+    parent_map: Dict[str, Optional[str]] = {}
+    for m in manifests:
+        pdir = _parent_dir_of(m)
+        resolved: Optional[str] = None
+        if pdir is not None:
+            if pdir in by_dir:
+                resolved = pdir
+            else:
+                sib = by_id.get(os.path.basename(pdir))
+                if sib is not None and sib["_dir"] != m["_dir"]:
+                    resolved = sib["_dir"]
+        if resolved is None and pos.get(m["_dir"], 0) > 0:
+            resolved = order[pos[m["_dir"]] - 1]
+        parent_map[m["_dir"]] = resolved
+    return parent_map
+
+
+def order_by_lineage(manifests: List[Dict[str, Any]],
+                     parent_map: Dict[str, Optional[str]]
+                     ) -> List[Dict[str, Any]]:
+    """Topologically order rounds parent-before-child; ties broken by name."""
+    by_dir = {m["_dir"]: m for m in manifests}
     depth_cache: Dict[str, int] = {}
 
     def depth(m: Dict[str, Any], seen=None) -> int:
         seen = seen or set()
         if m["_dir"] in depth_cache:
             return depth_cache[m["_dir"]]
-        parent_dir = _resolve_parent(m, by_dir, by_id)
-        if parent_dir is None or parent_dir in seen:
+        parent_dir = parent_map.get(m["_dir"])
+        if parent_dir is None or parent_dir in seen or parent_dir not in by_dir:
             depth_cache[m["_dir"]] = 0
             return 0
         d = 1 + depth(by_dir[parent_dir], seen | {m["_dir"]})
@@ -322,22 +341,42 @@ def _sha256(path: str, max_bytes: Optional[int] = None) -> Optional[str]:
     return digest.hexdigest()
 
 
-def verify(manifests: List[Dict[str, Any]], rounds_dir: str) -> List[Dict[str, Any]]:
+def _parent_integrated_file(parent: Dict[str, Any]) -> Optional[str]:
+    """The parent round's integrated.h5ad as it sits on disk now.
+
+    Uses the recorded output filename but resolves it inside the parent's
+    *current* directory, so the check survives the round set being archived to a
+    new location (the recorded abspath would be stale).
+    """
+    out = _g(parent, "integration", "output_h5ad")
+    base = os.path.basename(out) if out else "integrated.h5ad"
+    for cand in (os.path.join(parent["_dir"], base),
+                 os.path.join(parent["_dir"], "integrated.h5ad")):
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+def verify(manifests: List[Dict[str, Any]],
+           parent_map: Dict[str, Optional[str]],
+           scan_dir: Optional[str] = None) -> List[Dict[str, Any]]:
     """Return a list of findings: {round, severity, check, message}."""
     findings: List[Dict[str, Any]] = []
+    by_dir = {m["_dir"]: m for m in manifests}
 
     def add(rnd, severity, check, message):
         findings.append({"round": rnd, "severity": severity,
                          "check": check, "message": message})
 
-    # Round dirs that exist but carry no manifest.
-    manifest_dirs = {m["_dir"] for m in manifests}
-    for entry in sorted(os.listdir(rounds_dir)):
-        sub = os.path.abspath(os.path.join(rounds_dir, entry))
-        if os.path.isdir(sub) and sub not in manifest_dirs:
-            if any(f.endswith(".h5ad") for f in os.listdir(sub)):
-                add(entry, "warn", "missing_manifest",
-                    "Directory has h5ad output but no round_manifest.json.")
+    # Round dirs that exist but carry no manifest (discovery mode only).
+    if scan_dir:
+        manifest_dirs = {m["_dir"] for m in manifests}
+        for entry in sorted(os.listdir(scan_dir)):
+            sub = os.path.realpath(os.path.join(scan_dir, entry))
+            if os.path.isdir(sub) and sub not in manifest_dirs:
+                if any(f.endswith(".h5ad") for f in os.listdir(sub)):
+                    add(entry, "warn", "missing_manifest",
+                        "Directory has h5ad output but no round_manifest.json.")
 
     seeds, commits = set(), set()
     pkg_baseline: Optional[Dict[str, Any]] = None
@@ -380,20 +419,28 @@ def verify(manifests: List[Dict[str, Any]], rounds_dir: str) -> List[Dict[str, A
                         "Package versions differ from the first round: "
                         + "; ".join(changed))
 
-        # Lineage hash continuity: the file the decision consumed still matches
-        # the content fingerprint recorded at run time.
+        # Lineage hash continuity: the content the decision consumed should match
+        # the parent round's integrated output as it sits on disk now. Hashing
+        # the parent's current file (rather than the stale recorded path) makes
+        # the check robust to the round set being archived/relocated.
         fp = _g(m, "decisions", "input_fingerprint")
-        if isinstance(fp, dict) and fp.get("sha256") and fp.get("path"):
+        if isinstance(fp, dict) and fp.get("sha256"):
             recorded = fp["sha256"]
             max_bytes = fp.get("hashed_bytes") if fp.get("partial") else None
-            current = _sha256(fp["path"], max_bytes=max_bytes)
-            if current is None:
-                add(rid, "warn", "input_missing",
-                    f"Decision input no longer on disk: {fp['path']}")
-            elif current != recorded:
-                add(rid, "error", "input_changed",
-                    f"Decision input content changed since the run: {fp['path']} "
-                    "(recorded sha256 no longer matches).")
+            parent = by_dir.get(parent_map.get(m["_dir"]) or "")
+            target = _parent_integrated_file(parent) if parent else None
+            if target is None and fp.get("path") and os.path.exists(fp["path"]):
+                target = fp["path"]  # fall back to recorded path if still present
+            if target is None:
+                add(rid, "info", "input_unverifiable",
+                    "Parent integrated file not found on disk; cannot verify "
+                    "lineage hash continuity (set may be archived).")
+            else:
+                current = _sha256(target, max_bytes=max_bytes)
+                if current != recorded:
+                    add(rid, "error", "input_changed",
+                        f"Decision input content does not match the parent's "
+                        f"integrated file ({target}): recorded sha256 differs.")
 
     if len(seeds) > 1:
         add("(global)", "warn", "seed_drift",
@@ -459,11 +506,10 @@ def render_markdown_table(rows: List[Dict[str, Any]]) -> str:
 
 
 def render_mermaid(manifests: List[Dict[str, Any]],
-                   rows_by_dir: Dict[str, Dict[str, Any]]) -> str:
+                   rows_by_dir: Dict[str, Dict[str, Any]],
+                   parent_map: Dict[str, Optional[str]]) -> str:
     lines = ["flowchart TD"]
     node_id = {m["_dir"]: f"r{i}" for i, m in enumerate(manifests)}
-    by_dir = {m["_dir"]: m for m in manifests}
-    by_id = {m["_round_id"]: m for m in manifests}
     for m in manifests:
         row = rows_by_dir[m["_dir"]]
         cls = "clean"
@@ -478,7 +524,7 @@ def render_mermaid(manifests: List[Dict[str, Any]],
             label_bits.append(f"scIB {row['scib_best']} ({row.get('scib_best_variant')})")
         lines.append(f'    {node_id[m["_dir"]]}["{"<br/>".join(label_bits)}"]:::{cls}')
     for m in manifests:
-        parent_dir = _resolve_parent(m, by_dir, by_id)
+        parent_dir = parent_map.get(m["_dir"])
         if parent_dir in node_id:
             row = rows_by_dir[m["_dir"]]
             edge_bits = []
@@ -507,7 +553,8 @@ def render_findings_md(findings: List[Dict[str, Any]]) -> str:
     return "\n".join(rows)
 
 
-def render_markdown(rows, manifests, rows_by_dir, findings, verified) -> str:
+def render_markdown(rows, manifests, rows_by_dir, parent_map, findings,
+                    verified) -> str:
     parts = [
         "# Pipeline summary",
         "",
@@ -521,7 +568,7 @@ def render_markdown(rows, manifests, rows_by_dir, findings, verified) -> str:
         "## Lineage",
         "",
         "```mermaid",
-        render_mermaid(manifests, rows_by_dir),
+        render_mermaid(manifests, rows_by_dir, parent_map),
         "```",
         "",
         "## Integrity" + ("" if verified else " (run with --verify)"),
@@ -588,10 +635,19 @@ def render_html(md_table_rows, mermaid_src, findings, verified) -> str:
 def main():
     parser = argparse.ArgumentParser(
         description="Summarize a completed set of integration rounds.")
-    parser.add_argument("--rounds-dir", default="rounds",
-                        help="Directory containing round_* subdirectories.")
+    src = parser.add_mutually_exclusive_group(required=True)
+    src.add_argument("--rounds-dir",
+                     help="Directory containing round_* subdirectories "
+                          "(auto-discovers and lineage-orders them).")
+    src.add_argument("--rounds", nargs="+", metavar="PATH",
+                     help="Explicit, ordered list of round directories (or "
+                          "round_manifest.json paths). Use this when rounds are "
+                          "archived under arbitrary names/locations (e.g. an S3 "
+                          "mount). The supplied order is taken as the lineage "
+                          "when recorded parent pointers can't be resolved.")
     parser.add_argument("--output-dir", default=None,
-                        help="Where to write outputs (default: <rounds-dir>/summary).")
+                        help="Where to write outputs (default: <rounds-dir>/summary, "
+                             "or ./round_summary with --rounds).")
     parser.add_argument("--verify", action="store_true",
                         help="Run integrity checks (lineage, seed/code/env drift).")
     parser.add_argument("--strict", action="store_true",
@@ -599,31 +655,50 @@ def main():
     parser.add_argument("--format", default="md,html,csv,json,mmd",
                         help="Comma-separated subset of: md,html,csv,json,mmd.")
     args = parser.parse_args()
-
-    if not os.path.isdir(args.rounds_dir):
-        parser.error(f"rounds-dir not found: {args.rounds_dir}")
-    output_dir = args.output_dir or os.path.join(args.rounds_dir, "summary")
     formats = {f.strip() for f in args.format.split(",") if f.strip()}
 
-    manifest_paths = find_manifests(args.rounds_dir)
-    if not manifest_paths:
-        parser.error(f"No round_manifest.json found under {args.rounds_dir}")
-    manifests = order_by_lineage([load_manifest(p) for p in manifest_paths])
+    explicit_order = None
+    scan_dir = None
+    if args.rounds_dir:
+        if not os.path.isdir(args.rounds_dir):
+            parser.error(f"rounds-dir not found: {args.rounds_dir}")
+        manifest_paths = find_manifests(args.rounds_dir)
+        if not manifest_paths:
+            parser.error(f"No round_manifest.json found under {args.rounds_dir}")
+        manifests = [load_manifest(p) for p in manifest_paths]
+        scan_dir = args.rounds_dir
+        default_out = os.path.join(args.rounds_dir, "summary")
+    else:
+        manifest_paths = []
+        for item in args.rounds:
+            mp = os.path.join(item, "round_manifest.json") if os.path.isdir(item) else item
+            if not os.path.exists(mp):
+                parser.error(f"No round_manifest.json at: {item}")
+            manifest_paths.append(mp)
+        manifests = [load_manifest(p) for p in manifest_paths]
+        explicit_order = [m["_dir"] for m in manifests]  # trust supplied order
+        default_out = "round_summary"
+
+    output_dir = args.output_dir or default_out
+
+    parent_map = build_parent_map(manifests, explicit_order)
+    # Discovery mode: topologically reorder. Explicit list: keep supplied order.
+    if explicit_order is None:
+        manifests = order_by_lineage(manifests, parent_map)
     print(f"  Found {len(manifests)} round(s): "
           f"{', '.join(m['_round_id'] for m in manifests)}")
 
     by_dir = {m["_dir"]: m for m in manifests}
-    by_id = {m["_round_id"]: m for m in manifests}
     rows = []
     for m in manifests:
-        pdir = _resolve_parent(m, by_dir, by_id)
+        pdir = parent_map.get(m["_dir"])
         rows.append(extract_row(m, by_dir.get(pdir) if pdir else None))
     rows_by_dir = {m["_dir"]: r for m, r in zip(manifests, rows)}
     ledger = extract_decisions_ledger(manifests)
-    findings = verify(manifests, args.rounds_dir) if args.verify else []
+    findings = verify(manifests, parent_map, scan_dir) if args.verify else []
 
     os.makedirs(output_dir, exist_ok=True)
-    mermaid_src = render_mermaid(manifests, rows_by_dir)
+    mermaid_src = render_mermaid(manifests, rows_by_dir, parent_map)
 
     written = []
     if "csv" in formats and pd is not None:
@@ -641,7 +716,8 @@ def main():
     if "md" in formats:
         p = os.path.join(output_dir, "pipeline_summary.md")
         with open(p, "w", encoding="utf-8") as h:
-            h.write(render_markdown(rows, manifests, rows_by_dir, findings, args.verify))
+            h.write(render_markdown(rows, manifests, rows_by_dir, parent_map,
+                                    findings, args.verify))
         written.append(p)
     if "html" in formats:
         p = os.path.join(output_dir, "pipeline_summary.html")
@@ -652,7 +728,8 @@ def main():
         p = os.path.join(output_dir, "pipeline_summary.json")
         payload = {
             "generated": datetime.now().isoformat(),
-            "rounds_dir": os.path.abspath(args.rounds_dir),
+            "rounds_dir": os.path.abspath(args.rounds_dir) if args.rounds_dir else None,
+            "round_dirs": [m["_dir"] for m in manifests],
             "rounds": rows,
             "decisions_ledger": ledger,
             "findings": findings,
