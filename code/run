@@ -5,16 +5,41 @@ set -ex
 
 # 1: ROUND 1
 # 1a. integrate the whole-ganglia object. Writes round_01/integrated.h5ad + round_manifest.json
-python -u ./integrate_sns_scvi.py --config ./pipeline_scvi.yml \
-  --input /data/260603_CMG_untreated_unint/cmg_untreated_260603.h5ad \
-  --output-dir ../results/rounds/round_01/
+#python -u ./integrate_sns_scvi.py --config ./pipeline_scvi.yml \
+#  --input /data/260603_CMG_untreated_unint/cmg_untreated_260603.h5ad \
+#  --output-dir ../results/rounds/round_01/
 
 # 1b. inspect that integrated output (adds the inspection stage + auto_flags.yaml)
-python -u ./inspect_integration.py --config ./pipeline_scvi.yml \
-  --input ../results/rounds/round_01/integrated.h5ad \
-  --output-dir ../results/rounds/round_01/ \
+#python -u ./inspect_integration.py --config ./pipeline_scvi.yml \
+#  --input ../results/rounds/round_01/integrated.h5ad \
+#  --output-dir ../results/rounds/round_01/ \
+#  --all-sweep-architectures
+
+# 2: ROUND 2
+# decisions uploaded to: /data/260618_cmg_v2_round1/round_01/inspect_large_geneXcell_cell_nb/decisions_round1_large_geneXcell_nb.yaml
+
+# 2a. inspect to filter
+python -u ./inspect_integration.py \
+  --config ./pipeline_scvi.yml \
+  --input /data/260618_cmg_v2_round1/round_01/integrated.h5ad \
+  --cluster-key leiden_large_geneXcell_cell_nb \
+  --decisions /data/260618_cmg_v2_round1/round_01/inspect_large_geneXcell_cell_nb/decisions_round1_large_geneXcell_nb.yaml \
+  --output-dir /root/capsule/results/rounds/round_02
+
+# 2b. integration
+python -u ./integrate_sns_scvi.py \
+  --config ./pipeline_scvi.yml \
+  --input /root/capsule/results/rounds/round_02/filtered.h5ad \
+  --output-dir /root/capsule/results/rounds/round_02
+
+# 2c. inspection report
+python -u ./inspect_integration.py \
+  --config ./pipeline_scvi.yml \
+  --input /root/capsule/results/rounds/round_02/integrated.h5ad \
+  --output-dir /root/capsule/results/rounds/round_02_sweep \
   --all-sweep-architectures
 
+# ========================================= #
 
 ## run the integration and inspection together:
 #python -u ./integrate_sns_scvi.py "$@" --config ./pipeline_scvi.yml
