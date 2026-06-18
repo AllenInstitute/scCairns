@@ -2,32 +2,46 @@
 set -ex
 
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
-#python -u inspect_integration.py "$@" --input /data/sns_all_int_260513/scvi_large_Whole_Ganglia_20260513_hvgs/whole_ganglia_scvi_int_20260318.h5ad --output-dir ../results/rounds/round_01/
-#python -u ./integrate_sns_scvi.py "$@" --config ./pipeline_scvi.yml
+
+# 1: ROUND 1
+# 1a. integrate the whole-ganglia object. Writes round_01/integrated.h5ad + round_manifest.json
+python -u ./integrate_sns_scvi.py --config ./pipeline_scvi.yml \
+  --input /data/260603_CMG_untreated_unint/cmg_untreated_260603.h5ad \
+  --output-dir ../results/rounds/round_01/
+
+# 1b. inspect that integrated output (adds the inspection stage + auto_flags.yaml)
+python -u ./inspect_integration.py --config ./pipeline_scvi.yml \
+  --input ../results/rounds/round_01/integrated.h5ad \
+  --output-dir ../results/rounds/round_01/ \
+  --all-sweep-architectures
+
 
 ## run the integration and inspection together:
 #python -u ./integrate_sns_scvi.py "$@" --config ./pipeline_scvi.yml
 #python -u ./inspect_integration.py --config ./pipeline_scvi.yml
 
 # upload the decisions, filter, then pass the filtered object to integrate and inspect
-python -u ./inspect_integration.py \
-  --config ./pipeline_scvi.yml \
-  --input /root/capsule/data/260605_cmg_round3/integrated.h5ad \
-  --decisions /root/capsule/data/260605_cmg_round3/inspect_small_gene_nb/decisions_round3.yaml \
-  --output-dir /root/capsule/results/rounds/round_04
 
-python -u ./integrate_sns_scvi.py \
-  --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_04/filtered.h5ad \
-  --output-dir /root/capsule/results/rounds/round_04
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/data/260605_cmg_round3/integrated.h5ad \
+#  --cluster-key leiden_small_gene_nb \
+#  --decisions /root/capsule/data/260605_cmg_round3/inspect_small_gene_nb/decisions_round3.yaml \
+#  --output-dir /root/capsule/results/rounds/round_04
+
+#python -u ./integrate_sns_scvi.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_04/filtered.h5ad \
+# --output-dir /root/capsule/results/rounds/round_04
 
 # supply the keys of the integration we want to inspect or all sweeps
-python -u ./inspect_integration.py \
-  --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_04_sweep \
-  --all-sweep-architectures
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_04_sweep \
+#  --all-sweep-architectures
 
 # summarize rounds
-python -u ./summarize_rounds.py \
-  --rounds-dir data/260603_cmg_round1 data/260603_cmg_round2 data/260605_cmg_round3 results/rounds
+#python -u ./summarize_rounds.py \
+#  --rounds data/260603_cmg_round1/ data/260603_cmg_round2/ data/260605_cmg_round3/ data/260617_cmg_round4/round_04_sweep \
+#  --output-dir results/summary --verify
