@@ -19,27 +19,56 @@ set -ex
 # decisions uploaded to: /data/260618_cmg_v2_round1/round_01/inspect_large_geneXcell_cell_nb/decisions_round1_large_geneXcell_nb.yaml
 
 # 2a. inspect to filter
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /data/260618_cmg_v2_round1/round_01/integrated.h5ad \
+#  --cluster-key leiden_large_geneXcell_cell_nb \
+#  --decisions /data/260618_cmg_v2_round1/round_01/inspect_large_geneXcell_cell_nb/decisions_round1_large_geneXcell_nb.yaml \
+#  --output-dir /root/capsule/results/rounds/round_02
+
+# 2b. integration
+#python -u ./integrate_sns_scvi.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_02/filtered.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_02
+
+# 2c. inspection report
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_02/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_02_sweep \
+#  --all-sweep-architectures
+
+# ========================================= #
+
+# 3: ROUND 3
+# decisions uploaded to: /data/260618_cmg_v2_round2/round_02_sweep/inspect_harmony/decisions_round2.yaml
+
+
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
-  --input /data/260618_cmg_v2_round1/round_01/integrated.h5ad \
-  --cluster-key leiden_large_geneXcell_cell_nb \
-  --decisions /data/260618_cmg_v2_round1/round_01/inspect_large_geneXcell_cell_nb/decisions_round1_large_geneXcell_nb.yaml \
-  --output-dir /root/capsule/results/rounds/round_02
+  --input /data/260618_cmg_v2_round2/round_02/integrated.h5ad \
+  --cluster-key leiden_harmony \
+  --decisions /data/260618_cmg_v2_round2/round_02_sweep/inspect_harmony/decisions_round2.yaml \
+  --output-dir /root/capsule/results/rounds/round_03
 
 # 2b. integration
 python -u ./integrate_sns_scvi.py \
   --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_02/filtered.h5ad \
-  --output-dir /root/capsule/results/rounds/round_02
+  --input /root/capsule/results/rounds/round_03/filtered.h5ad \
+  --output-dir /root/capsule/results/rounds/round_03
 
 # 2c. inspection report
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_02/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_02_sweep \
+  --input /root/capsule/results/rounds/round_03/integrated.h5ad \
+  --output-dir /root/capsule/results/rounds/round_03_sweep \
   --all-sweep-architectures
 
+
 # ========================================= #
+
+
 
 ## run the integration and inspection together:
 #python -u ./integrate_sns_scvi.py "$@" --config ./pipeline_scvi.yml
