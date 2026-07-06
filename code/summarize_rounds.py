@@ -587,6 +587,39 @@ def _fmt(val: Any) -> str:
     return str(val)
 
 
+def _fmt_pct(val: Any) -> str:
+    if val is None:
+        return "—"
+    try:
+        return f"{float(val):.1f}%"
+    except (TypeError, ValueError):
+        return _fmt(val)
+
+
+def _fmt_date(val: Any) -> str:
+    if not val:
+        return "—"
+    text = str(val)
+    try:
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).strftime(
+            "%Y-%m-%d %H:%M")
+    except ValueError:
+        return text
+
+
+def _as_int(val: Any) -> Optional[int]:
+    if val is None:
+        return None
+    try:
+        return int(float(val))
+    except (TypeError, ValueError):
+        return None
+
+
+def _attr(val: Any) -> str:
+    return escape(str(val), quote=True)
+
+
 def render_markdown_table(rows: List[Dict[str, Any]]) -> str:
     headers = [label for _, label in TABLE_COLUMNS]
     lines = ["| " + " | ".join(headers) + " |",
@@ -678,53 +711,676 @@ def render_markdown(rows, manifests, rows_by_dir, parent_map, findings,
     return "\n".join(parts)
 
 
-def render_html(md_table_rows, mermaid_src, findings, verified) -> str:
-    head = (
-        "<!doctype html><meta charset='utf-8'>"
-        "<title>Pipeline summary</title>"
-        "<style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;"
-        "margin:2rem;color:#222}table{border-collapse:collapse;margin:1rem 0}"
-        "th,td{border:1px solid #ccc;padding:4px 8px;font-size:13px;text-align:right}"
-        "th{background:#f3f6fb}td:first-child,th:first-child{text-align:left}"
-        "h1,h2{color:#234}.warn{color:#cc7a00}.error{color:#c0392b}</style>"
-        "<script src='https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js'>"
-        "</script><script>mermaid.initialize({startOnLoad:true});</script>"
+def _html_filter_text(*values: Any) -> str:
+    return _attr(" ".join(str(v) for v in values if v is not None).lower())
+
+
+def _badge(label: Any, tone: str = "neutral") -> str:
+    return f"<span class='badge {tone}'>{escape(_fmt(label))}</span>"
+
+
+def _stat_card(label: str, value: str, detail: str = "",
+               tone: str = "neutral") -> str:
+    detail_html = f"<p>{escape(detail)}</p>" if detail else ""
+    return (
+        f"<article class='stat-card {tone}'>"
+        f"<span>{escape(label)}</span>"
+        f"<strong>{escape(value)}</strong>"
+        f"{detail_html}</article>"
     )
-    # Table
-    thead = "".join(f"<th>{escape(lbl)}</th>" for _, lbl in TABLE_COLUMNS)
+
+
+def _report_metrics(rows: List[Dict[str, Any]], findings: List[Dict[str, Any]],
+                    verified: bool) -> Dict[str, Any]:
+    start_cells = next((_as_int(r.get("n_cells")) for r in rows
+                        if _as_int(r.get("n_cells")) is not None), None)
+    final_cells = next((_as_int(r.get("n_cells")) for r in reversed(rows)
+                        if _as_int(r.get("n_cells")) is not None), None)
+    removed = sum(_as_int(r.get("removed")) or 0 for r in rows)
+    flagged = sum(_as_int(r.get("n_auto_flagged")) or 0 for r in rows)
+    max_clusters = max((_as_int(r.get("n_clusters")) or 0 for r in rows),
+                       default=0)
+    variant_counts = sorted({_as_int(r.get("n_variants")) for r in rows
+                             if _as_int(r.get("n_variants")) is not None})
+    retention_pct = None
+    if start_cells and final_cells is not None:
+        retention_pct = 100 * final_cells / start_cells
+    severity_counts = {"error": 0, "warn": 0, "info": 0}
+    for f in findings:
+        sev = str(f.get("severity", "info"))
+        severity_counts[sev] = severity_counts.get(sev, 0) + 1
+    if not verified:
+        integrity_label = "Not checked"
+        integrity_detail = "Run with --verify to add integrity findings"
+        integrity_tone = "pending"
+    elif not findings:
+        integrity_label = "Clean"
+        integrity_detail = "No integrity issues detected"
+        integrity_tone = "good"
+    else:
+        integrity_label = (
+            f"{severity_counts.get('error', 0)} error / "
+            f"{severity_counts.get('warn', 0)} warn"
+        )
+        integrity_detail = f"{len(findings)} total finding(s)"
+        integrity_tone = "risk" if severity_counts.get("error") else "warn"
+    return {
+        "start_cells": start_cells,
+        "final_cells": final_cells,
+        "removed": removed,
+        "flagged": flagged,
+        "max_clusters": max_clusters,
+        "variant_counts": variant_counts,
+        "retention_pct": retention_pct,
+        "integrity_label": integrity_label,
+        "integrity_detail": integrity_detail,
+        "integrity_tone": integrity_tone,
+        "severity_counts": severity_counts,
+    }
+
+
+def _render_overview_cards(rows: List[Dict[str, Any]],
+                           findings: List[Dict[str, Any]],
+                           verified: bool) -> str:
+    metrics = _report_metrics(rows, findings, verified)
+    start = _fmt(metrics["start_cells"])
+    final = _fmt(metrics["final_cells"])
+    retention = _fmt_pct(metrics["retention_pct"])
+    variants = metrics["variant_counts"]
+    variant_value = "—"
+    variant_detail = "No embedding variant count recorded"
+    if variants:
+        variant_value = _fmt(variants[-1])
+        variant_detail = (
+            "consistent across rounds" if len(variants) == 1
+            else f"range {_fmt(variants[0])}-{_fmt(variants[-1])}")
+    cards = [
+        _stat_card("Rounds", _fmt(len(rows)),
+                   f"{start} start cells to {final} final cells", "neutral"),
+        _stat_card("Cells retained", retention,
+                   f"{_fmt(metrics['removed'])} total removed", "good"),
+        _stat_card("Clusters / flagged",
+                   f"{_fmt(metrics['max_clusters'])} / {_fmt(metrics['flagged'])}",
+                   "maximum clusters and total auto-flagged clusters", "warn"),
+        _stat_card("Variants", variant_value, variant_detail, "neutral"),
+        _stat_card("Integrity", metrics["integrity_label"],
+                   metrics["integrity_detail"], metrics["integrity_tone"]),
+    ]
+    return "<section class='stat-grid' aria-label='Overview'>" + "".join(cards) + "</section>"
+
+
+def _render_rounds_table(rows: List[Dict[str, Any]]) -> str:
+    header_cells = "".join(
+        f"<th scope='col'>{escape(lbl)}</th>" for _, lbl in TABLE_COLUMNS)
     body_rows = []
-    for r in md_table_rows:
+    text_columns = {"round", "model_type", "commit", "filtered_on",
+                    "filter_source", "scib_best_variant", "scib_sel_vs_best"}
+    for r in rows:
+        filter_text = _html_filter_text(*[r.get(k) for k, _ in TABLE_COLUMNS],
+                                        r.get("variants"),
+                                        r.get("filter_cluster_key"))
         tds = []
         for key, _ in TABLE_COLUMNS:
             v = _fmt(r.get(key))
-            cls = ""
+            cls = "text" if key in text_columns else "num"
             if key == "commit" and r.get("dirty") is True:
-                v += " ⚠"; cls = " class='warn'"
+                v += " !"
+                cls += " warn"
             if key == "filter_source" and r.get(key) == "auto":
-                v += " ⚠"; cls = " class='warn'"
-            tds.append(f"<td{cls}>{escape(v)}</td>")
-        body_rows.append("<tr>" + "".join(tds) + "</tr>")
-    table = f"<table><tr>{thead}</tr>{''.join(body_rows)}</table>"
+                v += " !"
+                cls += " warn"
+            title = ""
+            if key == "n_variants" and r.get("variants"):
+                title = f" title='{_attr(r.get('variants'))}'"
+            tds.append(f"<td class='{cls}'{title}>{escape(v)}</td>")
+        body_rows.append(
+            f"<tr data-filter='{filter_text}'>" + "".join(tds) + "</tr>")
+    return (
+        "<div class='table-wrap'><table id='rounds-table'>"
+        f"<thead><tr>{header_cells}</tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody></table></div>"
+    )
 
-    # Findings
+
+def _render_retention(rows: List[Dict[str, Any]]) -> str:
+    cell_counts = [_as_int(r.get("n_cells")) for r in rows]
+    cell_counts = [v for v in cell_counts if v is not None]
+    if not cell_counts:
+        return "<p class='empty-state'>No cell counts recorded.</p>"
+    start = cell_counts[0] or 0
+    max_cells = max(cell_counts) or 1
+    items = []
+    for r in rows:
+        cells = _as_int(r.get("n_cells"))
+        removed = _as_int(r.get("removed"))
+        retained = (100 * cells / start) if start and cells is not None else None
+        width = 0 if cells is None or cells <= 0 else max(
+            1.0, min(100.0, 100 * cells / max_cells))
+        filter_text = _html_filter_text(r.get("round"), r.get("filtered_on"),
+                                        r.get("filter_source"))
+        items.append(
+            f"<div class='timeline-row' data-filter='{filter_text}'>"
+            f"<div class='timeline-label'><strong>{escape(_fmt(r.get('round')))}</strong>"
+            f"<span>{escape(_fmt(cells))} cells</span></div>"
+            f"<div class='bar-cell'><div class='bar-track'>"
+            f"<span style='width:{width:.2f}%'></span></div>"
+            f"<div class='timeline-meta'>"
+            f"{escape(_fmt_pct(retained))} retained"
+            f" · {escape(_fmt(removed))} removed"
+            f" · {escape(_fmt_pct(r.get('removal_pct')))} round removal"
+            f"</div></div></div>"
+        )
+    return "<div class='timeline'>" + "".join(items) + "</div>"
+
+
+def _render_round_cards(rows: List[Dict[str, Any]]) -> str:
+    cards = []
+    open_attr = " open" if len(rows) <= 4 else ""
+    for r in rows:
+        filter_text = _html_filter_text(r.get("round"), r.get("filtered_on"),
+                                        r.get("filter_cluster_key"),
+                                        r.get("variants"),
+                                        r.get("clusters_variant"))
+        badges = [_badge(f"{_fmt(r.get('n_cells'))} cells", "good")]
+        if r.get("filtered_on"):
+            badges.append(_badge(f"filtered on {r.get('filtered_on')}", "neutral"))
+        if r.get("filter_source") == "auto":
+            badges.append(_badge("auto selection", "warn"))
+        if r.get("dirty") is True:
+            badges.append(_badge("dirty tree", "warn"))
+        fields = [
+            ("Updated", _fmt_date(r.get("updated"))),
+            ("Genes", _fmt(r.get("n_genes"))),
+            ("Model", _fmt(r.get("model_type"))),
+            ("Annotation", _fmt(r.get("annotation"))),
+            ("Seed", _fmt(r.get("seed"))),
+            ("Commit", _fmt(r.get("commit"))),
+            ("Clusters", _fmt(r.get("n_clusters"))),
+            ("Flagged", _fmt(r.get("n_auto_flagged"))),
+            ("Cluster source", _fmt(r.get("clusters_variant"))),
+            ("Input cells", _fmt(r.get("input_cells"))),
+            ("Output cells", _fmt(r.get("output_cells"))),
+            ("Removed", f"{_fmt(r.get('removed'))} ({_fmt_pct(r.get('removal_pct'))})"),
+            ("Filter key", _fmt(r.get("filter_cluster_key"))),
+            ("scIB best", f"{_fmt(r.get('scib_best'))} ({_fmt(r.get('scib_best_variant'))})"),
+            ("Selected / parent best", _fmt(r.get("scib_sel_vs_best"))),
+        ]
+        detail = "".join(
+            f"<div><dt>{escape(label)}</dt><dd>{escape(value)}</dd></div>"
+            for label, value in fields)
+        variants = r.get("variants")
+        variants_html = ""
+        if variants:
+            variants_html = (
+                "<div class='variant-list'><dt>Variants</dt>"
+                f"<dd>{escape(str(variants))}</dd></div>")
+        cards.append(
+            f"<details class='round-card' data-filter='{filter_text}'{open_attr}>"
+            f"<summary><span><strong>{escape(_fmt(r.get('round')))}</strong>"
+            f"<small>{escape(_fmt(r.get('n_clusters')))} clusters"
+            f" · {escape(_fmt(r.get('n_variants')))} variants</small></span>"
+            f"<span class='badge-row'>{''.join(badges)}</span></summary>"
+            f"<dl class='round-fields'>{detail}{variants_html}</dl></details>"
+        )
+    return "<div class='round-card-grid'>" + "".join(cards) + "</div>"
+
+
+def _group_ledger(ledger: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
+    grouped: Dict[str, List[Dict[str, Any]]] = {}
+    for item in ledger:
+        grouped.setdefault(str(item.get("round") or "unknown"), []).append(item)
+    return grouped
+
+
+def _render_ledger(ledger: Optional[List[Dict[str, Any]]]) -> str:
+    ledger = ledger or []
+    if not ledger:
+        return "<p class='empty-state'>No keep/remove decisions recorded.</p>"
+    groups = _group_ledger(ledger)
+    parts = []
+    for round_id, actions in groups.items():
+        first = actions[0]
+        filter_text = _html_filter_text(round_id, first.get("filtered_on"),
+                                        first.get("cluster_key"),
+                                        *[a.get("action") for a in actions])
+        items = "".join(
+            f"<li><code>{escape(str(a.get('action')))}</code></li>"
+            for a in actions)
+        meta = []
+        if first.get("filtered_on"):
+            meta.append(_badge(first["filtered_on"], "neutral"))
+        if first.get("cluster_key"):
+            meta.append(_badge(first["cluster_key"], "neutral"))
+        parts.append(
+            f"<details class='ledger-group' data-filter='{filter_text}' open>"
+            f"<summary><strong>{escape(round_id)}</strong>"
+            f"<span>{len(actions)} action(s)</span>"
+            f"<span class='badge-row'>{''.join(meta)}</span></summary>"
+            f"<ul class='action-list'>{items}</ul></details>"
+        )
+    return "<div class='ledger-list'>" + "".join(parts) + "</div>"
+
+
+def _render_findings(findings: List[Dict[str, Any]], verified: bool) -> str:
     if not verified:
-        findings_html = "<p><em>Not checked (run with --verify).</em></p>"
-    elif not findings:
-        findings_html = "<p><em>No integrity issues detected.</em></p>"
-    else:
-        rows = ["<tr><th>Severity</th><th>Round</th><th>Check</th><th>Detail</th></tr>"]
-        for f in findings:
-            rows.append(
-                f"<tr><td class='{escape(f['severity'])}'>{escape(f['severity'])}</td>"
-                f"<td>{escape(str(f['round']))}</td><td>{escape(f['check'])}</td>"
-                f"<td>{escape(f['message'])}</td></tr>")
-        findings_html = "<table>" + "".join(rows) + "</table>"
+        return "<p class='empty-state'>Not checked. Run with --verify.</p>"
+    if not findings:
+        return "<p class='empty-state good'>No integrity issues detected.</p>"
+    order = {"error": 0, "warn": 1, "info": 2}
+    rows = [
+        "<tr><th scope='col'>Severity</th><th scope='col'>Round</th>"
+        "<th scope='col'>Check</th><th scope='col'>Detail</th></tr>"
+    ]
+    for f in sorted(findings, key=lambda x: order.get(x.get("severity"), 9)):
+        sev = str(f.get("severity", "info"))
+        rows.append(
+            f"<tr><td class='{_attr(sev)}'>{escape(sev)}</td>"
+            f"<td>{escape(str(f.get('round')))}</td>"
+            f"<td>{escape(str(f.get('check')))}</td>"
+            f"<td>{escape(str(f.get('message')))}</td></tr>")
+    return "<div class='table-wrap'><table class='findings-table'>" + "".join(rows) + "</table></div>"
 
-    return (f"{head}<h1>Pipeline summary</h1>"
-            f"<p><em>Generated {escape(datetime.now().isoformat(timespec='seconds'))}</em></p>"
-            f"<h2>Rounds</h2>{table}"
-            f"<h2>Lineage</h2><pre class='mermaid'>{escape(mermaid_src)}</pre>"
-            f"<h2>Integrity</h2>{findings_html}")
+
+def render_html(md_table_rows, mermaid_src, findings, verified,
+                ledger: Optional[List[Dict[str, Any]]] = None) -> str:
+    generated = datetime.now().isoformat(timespec="seconds")
+    metrics = _report_metrics(md_table_rows, findings, verified)
+    retained = _fmt_pct(metrics["retention_pct"])
+    css = """
+        :root {
+            --bg: #f6f7f2;
+            --panel: #ffffff;
+            --text: #17211c;
+            --muted: #65706a;
+            --line: #d9dfd7;
+            --head: #153f45;
+            --head-2: #4f5f38;
+            --accent: #2f7d68;
+            --accent-2: #b86f3c;
+            --warn: #a86316;
+            --risk: #ba3b3b;
+            --good-bg: #e6f2e9;
+            --warn-bg: #fff3df;
+            --risk-bg: #fde8e8;
+            --neutral-bg: #edf1f0;
+            --shadow: 0 12px 28px rgba(23, 33, 28, 0.09);
+        }
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            line-height: 1.45;
+        }
+        .report-hero {
+            background:
+                linear-gradient(135deg, rgba(21, 63, 69, 0.98), rgba(79, 95, 56, 0.92)),
+                linear-gradient(90deg, var(--head), var(--accent-2));
+            color: #fff;
+            padding: 34px 24px 30px;
+        }
+        .hero-inner, main {
+            width: min(1180px, calc(100% - 32px));
+            margin: 0 auto;
+        }
+        .eyebrow {
+            margin: 0 0 8px;
+            color: rgba(255, 255, 255, 0.74);
+            font-size: 12px;
+            font-weight: 700;
+            letter-spacing: 0;
+            text-transform: uppercase;
+        }
+        h1, h2, h3, p { margin-top: 0; }
+        h1 {
+            margin-bottom: 8px;
+            font-size: clamp(32px, 5vw, 54px);
+            line-height: 1.02;
+            letter-spacing: 0;
+        }
+        .hero-copy {
+            max-width: 760px;
+            margin: 0;
+            color: rgba(255, 255, 255, 0.82);
+            font-size: 16px;
+        }
+        main { padding: 24px 0 46px; }
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(5, minmax(0, 1fr));
+            gap: 12px;
+            margin-bottom: 18px;
+        }
+        .stat-card, .panel, .round-card, .ledger-group {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+        }
+        .stat-card {
+            min-height: 124px;
+            padding: 16px;
+            border-top: 4px solid var(--accent);
+        }
+        .stat-card.good { border-top-color: var(--accent); }
+        .stat-card.warn, .stat-card.pending { border-top-color: var(--warn); }
+        .stat-card.risk { border-top-color: var(--risk); }
+        .stat-card span {
+            display: block;
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .stat-card strong {
+            display: block;
+            margin: 10px 0 6px;
+            font-size: 28px;
+            line-height: 1.1;
+        }
+        .stat-card p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .panel {
+            padding: 18px;
+            margin-top: 18px;
+        }
+        .panel-header {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 14px;
+            margin-bottom: 14px;
+        }
+        .panel-header h2 {
+            margin-bottom: 3px;
+            font-size: 21px;
+        }
+        .panel-header p {
+            margin: 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .filter-input {
+            width: min(280px, 100%);
+            height: 36px;
+            border: 1px solid var(--line);
+            border-radius: 6px;
+            padding: 0 11px;
+            font: inherit;
+            background: #fff;
+            color: var(--text);
+        }
+        .table-wrap {
+            max-width: 100%;
+            overflow: auto;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            min-width: 980px;
+            background: #fff;
+        }
+        th, td {
+            padding: 9px 10px;
+            border-bottom: 1px solid var(--line);
+            font-size: 13px;
+            vertical-align: top;
+        }
+        th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            background: #eef2ef;
+            color: #26332d;
+            text-align: right;
+            font-weight: 700;
+        }
+        td.num { text-align: right; white-space: nowrap; }
+        td.text, th:first-child, td:first-child { text-align: left; }
+        td:first-child {
+            font-weight: 700;
+            color: #1b423b;
+        }
+        .warn { color: var(--warn); font-weight: 700; }
+        .error { color: var(--risk); font-weight: 700; }
+        .info { color: #476474; font-weight: 700; }
+        .timeline {
+            display: grid;
+            gap: 13px;
+        }
+        .timeline-row {
+            display: grid;
+            grid-template-columns: minmax(140px, 210px) 1fr;
+            gap: 16px;
+            align-items: center;
+        }
+        .timeline-label strong,
+        .timeline-label span {
+            display: block;
+        }
+        .timeline-label span,
+        .timeline-meta {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .bar-track {
+            height: 16px;
+            border-radius: 6px;
+            background: #e7ebe6;
+            overflow: hidden;
+            border: 1px solid #d4dcd3;
+        }
+        .bar-track span {
+            display: block;
+            height: 100%;
+            border-radius: 6px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-2));
+        }
+        .timeline-meta { margin-top: 5px; }
+        .round-card-grid,
+        .ledger-list {
+            display: grid;
+            gap: 12px;
+        }
+        .round-card, .ledger-group {
+            box-shadow: none;
+        }
+        summary {
+            cursor: pointer;
+            list-style: none;
+        }
+        summary::-webkit-details-marker { display: none; }
+        .round-card summary,
+        .ledger-group summary {
+            display: flex;
+            justify-content: space-between;
+            gap: 12px;
+            align-items: center;
+            padding: 14px 15px;
+        }
+        .round-card summary strong,
+        .ledger-group summary strong {
+            display: block;
+            font-size: 16px;
+        }
+        .round-card summary small,
+        .ledger-group summary span {
+            color: var(--muted);
+            font-size: 13px;
+        }
+        .badge-row {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+            gap: 6px;
+        }
+        .badge {
+            display: inline-flex;
+            align-items: center;
+            min-height: 24px;
+            padding: 3px 8px;
+            border-radius: 999px;
+            background: var(--neutral-bg);
+            color: #2b3833;
+            font-size: 12px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .badge.good { background: var(--good-bg); color: #24533d; }
+        .badge.warn { background: var(--warn-bg); color: var(--warn); }
+        .round-fields {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 0;
+            margin: 0;
+            padding: 0 15px 15px;
+            border-top: 1px solid var(--line);
+        }
+        .round-fields div,
+        .round-fields .variant-list {
+            padding: 12px 12px 10px 0;
+            min-width: 0;
+        }
+        .round-fields dt {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }
+        .round-fields dd {
+            margin: 3px 0 0;
+            overflow-wrap: anywhere;
+        }
+        .variant-list {
+            grid-column: 1 / -1;
+        }
+        .lineage-frame {
+            overflow: auto;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fbfcfa;
+            padding: 12px;
+        }
+        pre.mermaid {
+            margin: 0;
+            min-height: 120px;
+            font-size: 13px;
+        }
+        .action-list {
+            margin: 0;
+            padding: 0 15px 15px 38px;
+            border-top: 1px solid var(--line);
+            columns: 2 300px;
+        }
+        .action-list li {
+            margin: 8px 0;
+            break-inside: avoid;
+        }
+        code {
+            background: #f1f3ef;
+            border: 1px solid #dde4dc;
+            border-radius: 5px;
+            padding: 2px 5px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+        }
+        .empty-state {
+            margin: 0;
+            padding: 14px;
+            border: 1px solid var(--line);
+            border-radius: 8px;
+            background: #fbfcfa;
+            color: var(--muted);
+        }
+        .empty-state.good {
+            color: #24533d;
+            background: var(--good-bg);
+            border-color: #c6ddca;
+        }
+        [hidden] { display: none !important; }
+        @media (max-width: 900px) {
+            .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+            .round-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+        @media (max-width: 680px) {
+            .hero-inner, main { width: min(100% - 24px, 1180px); }
+            .report-hero { padding: 26px 0 24px; }
+            main { padding-top: 14px; }
+            .stat-grid { grid-template-columns: 1fr; }
+            .panel { padding: 14px; }
+            .panel-header,
+            .round-card summary,
+            .ledger-group summary {
+                display: grid;
+                justify-items: start;
+            }
+            .badge-row { justify-content: flex-start; }
+            .timeline-row { grid-template-columns: 1fr; gap: 6px; }
+            .round-fields { grid-template-columns: 1fr; }
+            table { min-width: 860px; }
+        }
+    """
+    js = """
+        document.addEventListener('DOMContentLoaded', function () {
+            var input = document.getElementById('round-filter');
+            if (!input) return;
+            var items = Array.prototype.slice.call(
+                document.querySelectorAll('[data-filter]'));
+            input.addEventListener('input', function () {
+                var query = input.value.trim().toLowerCase();
+                items.forEach(function (el) {
+                    el.hidden = !!query && el.dataset.filter.indexOf(query) === -1;
+                });
+            });
+        });
+    """
+    head = (
+        "<!doctype html><html lang='en'><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Pipeline summary</title>"
+        f"<style>{css}</style>"
+        "<script src='https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js'>"
+        "</script><script>mermaid.initialize({startOnLoad:true,theme:'neutral'});"
+        "</script></head>"
+    )
+    return (
+        f"{head}<body><header class='report-hero'><div class='hero-inner'>"
+        f"<p class='eyebrow'>Integration rounds report</p>"
+        f"<h1>Pipeline summary</h1>"
+        f"<p class='hero-copy'>Generated {escape(generated)} · "
+        f"{escape(_fmt(len(md_table_rows)))} round(s) · "
+        f"{escape(retained)} retained from first to final round</p>"
+        f"</div></header><main>"
+        f"{_render_overview_cards(md_table_rows, findings, verified)}"
+        f"<section class='panel'><div class='panel-header'><div>"
+        f"<h2>Rounds</h2><p>Per-round integration, filtering, and benchmark summary.</p>"
+        f"</div><input class='filter-input' id='round-filter' type='search' "
+        f"placeholder='Filter report' aria-label='Filter report'></div>"
+        f"{_render_rounds_table(md_table_rows)}</section>"
+        f"<section class='panel'><div class='panel-header'><div>"
+        f"<h2>Retention</h2><p>Cell count trajectory across the lineage.</p>"
+        f"</div></div>{_render_retention(md_table_rows)}</section>"
+        f"<section class='panel'><div class='panel-header'><div>"
+        f"<h2>Round details</h2><p>Expanded manifest fields for each round.</p>"
+        f"</div></div>{_render_round_cards(md_table_rows)}</section>"
+        f"<section class='panel'><div class='panel-header'><div>"
+        f"<h2>Lineage</h2><p>Parent-child flow with filtering deltas.</p>"
+        f"</div></div><div class='lineage-frame'>"
+        f"<pre class='mermaid'>{escape(mermaid_src)}</pre></div></section>"
+        f"<section class='panel'><div class='panel-header'><div>"
+        f"<h2>Decisions ledger</h2><p>All recorded keep/remove actions.</p>"
+        f"</div></div>{_render_ledger(ledger)}</section>"
+        f"<section class='panel'><div class='panel-header'><div>"
+        f"<h2>Integrity</h2><p>Verification results and reproducibility checks.</p>"
+        f"</div></div>{_render_findings(findings, verified)}</section>"
+        f"</main><script>{js}</script></body></html>"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -858,7 +1514,7 @@ def main():
     if "html" in formats:
         p = os.path.join(output_dir, "pipeline_summary.html")
         with open(p, "w", encoding="utf-8") as h:
-            h.write(render_html(rows, mermaid_src, findings, args.verify))
+            h.write(render_html(rows, mermaid_src, findings, args.verify, ledger))
         written.append(p)
     if "json" in formats:
         p = os.path.join(output_dir, "pipeline_summary.json")
