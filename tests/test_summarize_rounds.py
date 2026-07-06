@@ -138,6 +138,28 @@ def test_scib_selected_vs_best_from_parent(tmp_path):
     assert row2["scib_selected_best"] == 0.88
     assert row2["scib_selected_is_best"] is False
     assert "✗" in row2["scib_sel_vs_best"]
+    # Round 1's CSV carries a full Total → no metric tag.
+    assert row1["scib_metric"] == "Total"
+
+
+def test_scib_batch_only_aggregate_fallback(tmp_path):
+    # Annotation-free benchmark: no Total/Bio conservation, only Batch correction
+    # (matches the real CSV shape). scib_scores must fall back to that aggregate.
+    d = tmp_path / "round_01"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "scib_benchmark_results.csv").write_text(
+        "Embedding,BRAS,Graph connectivity,PCR comparison,Batch correction\n"
+        "X_scVI_large_geneXcell_cell_nb,0.7,0.8,0.6,0.71\n"
+        "X_pca_harmony,0.9,0.85,0.7,0.83\n"
+    )
+    scores, metric = sr.scib_scores(str(d))
+    assert metric == "Batch correction"
+    assert scores == {"large_geneXcell_cell_nb": 0.71, "harmony": 0.83}
+    best_var, best_score = sr._best_integrated(scores)
+    assert (best_var, best_score) == ("harmony", 0.83)
+    # The batch-only aggregate is tagged so it isn't read as a Total.
+    assert sr._scib_metric_tag(metric) == " (batch)"
+    assert sr._scib_metric_tag("Total") == ""
 
 
 def _sweep_inspection(base: Path, variant: str, n_clusters: int, n_flagged=0):
