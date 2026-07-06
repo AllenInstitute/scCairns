@@ -19,6 +19,14 @@ Usage
 -----
     python code/summarize_rounds.py --rounds-dir results/rounds
     python code/summarize_rounds.py --rounds-dir results/rounds --verify --strict
+
+Clusters/flagged counts come from the per-architecture sweep inspection
+manifests (``inspect_<arch>/round_manifest.json``); each round shows the
+architecture the human acted on (the variant its child round was filtered on).
+The terminal round has no child, so pin its architecture explicitly:
+
+    python code/summarize_rounds.py --rounds r1 r2 r3 \\
+        --terminal-run-architecture leiden_harmony
 """
 
 from __future__ import annotations
@@ -176,12 +184,79 @@ def variant_from_embedding_key(key: str) -> str:
     return key
 
 
+def variant_from_cluster_key(key: Optional[str]) -> Optional[str]:
+    """Map a leiden cluster key to its integration-variant label."""
+    if not key:
+        return None
+    if key == "leiden":
+        return "default"
+    if key.startswith("leiden_"):
+        return key[len("leiden_"):]
+    return key
+
+
+def find_inspection_manifests(round_dir: str) -> Dict[str, Dict[str, Any]]:
+    """Locate a round's per-architecture inspection manifests.
+
+    In sweep mode ``inspect_integration.py`` writes one ``round_manifest.json``
+    per architecture into ``inspect_<arch>/`` subdirectories (the only manifests
+    that carry the ``inspection`` stage — n_clusters/n_auto_flagged). Depending
+    on how the run was invoked these sit either inside the round dir itself or in
+    a sibling ``<round>_sweep`` directory. Return ``{variant: manifest}`` keyed
+    by the integration variant the inspection clustered on.
+    """
+    result: Dict[str, Dict[str, Any]] = {}
+    for root in (round_dir, round_dir + "_sweep"):
+        if not os.path.isdir(root):
+            continue
+        for entry in sorted(os.listdir(root)):
+            if not entry.startswith("inspect_"):
+                continue
+            sub = os.path.join(root, entry)
+            cand = os.path.join(sub, "round_manifest.json")
+            if not (os.path.isdir(sub) and os.path.exists(cand)):
+                continue
+            try:
+                man = load_manifest(cand)
+            except Exception:
+                continue
+            insp = man.get("inspection")
+            if not isinstance(insp, dict):
+                continue
+            variant = (variant_from_cluster_key(insp.get("cluster_key"))
+                       or entry[len("inspect_"):])
+            result.setdefault(variant, man)
+    return result
+
+
+def _scib_csv_path(round_dir: str) -> Optional[str]:
+    """First existing scib_benchmark_results.csv for a round.
+
+    Integration writes the CSV into the round dir, but relocated/archived sets
+    may carry it under a sibling ``<round>_sweep`` or an ``inspect_*`` subdir;
+    check those as fallbacks.
+    """
+    candidates = [os.path.join(round_dir, "scib_benchmark_results.csv")]
+    for root in (round_dir, round_dir + "_sweep"):
+        if not os.path.isdir(root):
+            continue
+        candidates.append(os.path.join(root, "scib_benchmark_results.csv"))
+        for entry in sorted(os.listdir(root)):
+            if entry.startswith("inspect_"):
+                candidates.append(
+                    os.path.join(root, entry, "scib_benchmark_results.csv"))
+    for path in candidates:
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def read_scib(round_dir: str) -> Optional[pd.DataFrame]:
     """Read scib_benchmark_results.csv → {embedding: total_score}, if present."""
     if pd is None:
         return None
-    path = os.path.join(round_dir, "scib_benchmark_results.csv")
-    if not os.path.exists(path):
+    path = _scib_csv_path(round_dir)
+    if path is None:
         return None
     try:
         df = pd.read_csv(path, index_col=0)
@@ -236,19 +311,24 @@ def _best_integrated(scores: Dict[str, float]):
     return best, integrated[best]
 
 
-def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None
-                ) -> Dict[str, Any]:
+def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None,
+                acted_on_variant: Optional[str] = None) -> Dict[str, Any]:
     """Build one table row.
 
     ``parent`` is the manifest of the round this one was filtered from. The
     filtering variant was clustered/scored in that parent's integration, so the
     "selected vs best" scIB comparison is sourced from the PARENT benchmark,
     while "scIB best" reflects THIS round's own integration quality (the trend).
+
+    ``acted_on_variant`` is the variant the CHILD round was filtered on — i.e.
+    the architecture whose clustering the human reviewed and acted upon in THIS
+    round. It drives which per-architecture inspection manifest supplies the
+    clusters/flagged counts (see below).
     """
     integ = m.get("integration") or {}
-    insp = m.get("inspection") or {}
     dec = m.get("decisions") or {}
     filtered_on = dec.get("filtered_on") or {}
+    selected_variant = filtered_on.get("variant")
 
     embedding_keys = integ.get("embedding_keys") or []
     scvi_variants = [variant_from_embedding_key(k) for k in embedding_keys
@@ -256,9 +336,27 @@ def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None
 
     own_best_variant, own_best_score = _best_integrated(scib_scores(m["_dir"]))
 
+    # Inspection (clusters/flagged) is written per-architecture into
+    # inspect_<arch>/ sweep manifests, not the round's own manifest. Choose the
+    # architecture the human acted on: the variant the CHILD round was filtered
+    # on, then this round's own filtered variant, then its best-scoring variant,
+    # then the sole architecture if there is only one.
+    insp = m.get("inspection") if isinstance(m.get("inspection"), dict) else None
+    clusters_variant = None
+    if insp is None:
+        insp_by_variant = find_inspection_manifests(m["_dir"])
+        for cand in (acted_on_variant, selected_variant, own_best_variant):
+            if cand and cand in insp_by_variant:
+                insp = insp_by_variant[cand].get("inspection")
+                clusters_variant = cand
+                break
+        if insp is None and len(insp_by_variant) == 1:
+            clusters_variant, only_man = next(iter(insp_by_variant.items()))
+            insp = only_man.get("inspection")
+    insp = insp or {}
+
     # Selected-variant comparison, against the parent benchmark where the
     # filtering choice was actually made.
-    selected_variant = filtered_on.get("variant")
     sel_score = sel_best_variant = sel_best_score = sel_is_best = None
     if selected_variant and parent is not None:
         parent_scores = scib_scores(parent["_dir"])
@@ -289,6 +387,7 @@ def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None
         "dirty": _g(m, "code", "dirty"),
         "n_clusters": insp.get("n_clusters"),
         "n_auto_flagged": insp.get("n_auto_flagged"),
+        "clusters_variant": clusters_variant,
         "input_cells": dec.get("input_cells"),
         "output_cells": dec.get("output_cells"),
         "removed": dec.get("removed"),
@@ -654,6 +753,14 @@ def main():
                         help="Exit non-zero if any verification finding is raised.")
     parser.add_argument("--format", default="md,html,csv,json,mmd",
                         help="Comma-separated subset of: md,html,csv,json,mmd.")
+    parser.add_argument("--terminal-run-architecture", "--terminal_run_architecture",
+                        dest="terminal_run_architecture", default=None,
+                        metavar="KEY",
+                        help="Architecture to source clusters/flagged from for the "
+                             "terminal round(s) — those with no child round to "
+                             "declare an acted-on variant. Accepts a variant name "
+                             "(e.g. 'harmony') or a cluster key (e.g. "
+                             "'leiden_harmony').")
     args = parser.parse_args()
     formats = {f.strip() for f in args.format.split(",") if f.strip()}
 
@@ -689,10 +796,39 @@ def main():
           f"{', '.join(m['_round_id'] for m in manifests)}")
 
     by_dir = {m["_dir"]: m for m in manifests}
+
+    # The variant a round was filtered on for its CHILD is the architecture whose
+    # clustering the human reviewed and acted on in the (parent) round. Map each
+    # round's _dir → that acted-on variant so extract_row can source the matching
+    # inspection manifest for its clusters/flagged counts.
+    acted_on: Dict[str, Optional[str]] = {}
+    for m in manifests:
+        pdir = parent_map.get(m["_dir"])
+        v = _g(m, "decisions", "filtered_on", "variant")
+        if pdir and v and pdir not in acted_on:
+            acted_on[pdir] = v
+
+    # Terminal round(s) have no child to declare an acted-on variant. When the
+    # user pins one with --terminal-run-architecture, apply it to the leaves
+    # (rounds that are nobody's parent).
+    terminal_variant = variant_from_cluster_key(args.terminal_run_architecture)
+    if terminal_variant:
+        parents = {p for p in parent_map.values() if p}
+        for m in manifests:
+            if m["_dir"] in parents:
+                continue  # not a leaf; its acted-on variant comes from its child
+            acted_on[m["_dir"]] = terminal_variant
+            available = set(find_inspection_manifests(m["_dir"]))
+            if available and terminal_variant not in available:
+                print(f"  [WARN] --terminal-run-architecture "
+                      f"'{terminal_variant}' not found for {m['_round_id']}; "
+                      f"available: {', '.join(sorted(available))}")
+
     rows = []
     for m in manifests:
         pdir = parent_map.get(m["_dir"])
-        rows.append(extract_row(m, by_dir.get(pdir) if pdir else None))
+        rows.append(extract_row(m, by_dir.get(pdir) if pdir else None,
+                                acted_on_variant=acted_on.get(m["_dir"])))
     rows_by_dir = {m["_dir"]: r for m, r in zip(manifests, rows)}
     ledger = extract_decisions_ledger(manifests)
     findings = verify(manifests, parent_map, scan_dir) if args.verify else []

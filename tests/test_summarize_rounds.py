@@ -140,6 +140,90 @@ def test_scib_selected_vs_best_from_parent(tmp_path):
     assert "✗" in row2["scib_sel_vs_best"]
 
 
+def _sweep_inspection(base: Path, variant: str, n_clusters: int, n_flagged=0):
+    """Write a per-architecture sweep inspection manifest (inspection stage)."""
+    _write_manifest(base / f"inspect_{variant}", {
+        "pipeline_version": 1,
+        "code": {"commit": "aaaa", "commit_short": "aaaa", "dirty": False},
+        "inspection": {"cluster_key": f"leiden_{variant}",
+                       "n_clusters": n_clusters, "n_auto_flagged": n_flagged},
+    })
+
+
+def test_clusters_from_sweep_inspection_manifests(tmp_path):
+    # Rounds whose own manifest carries integration+decisions but NO inspection
+    # stage; clusters/flagged live in per-architecture inspect_* sweep manifests.
+    integ = _round1(tmp_path)
+    # Strip the inline inspection stage so resolution must fall to the sweep.
+    m1 = json.loads((tmp_path / "round_01" / "round_manifest.json").read_text())
+    del m1["inspection"]
+    (tmp_path / "round_01" / "round_manifest.json").write_text(json.dumps(m1))
+    # Round 1's sweep wrote inspect_* subdirs INSIDE the round dir.
+    _sweep_inspection(tmp_path / "round_01", "small_gene_nb", 24, 3)
+    _sweep_inspection(tmp_path / "round_01", "big_zinb", 30, 1)
+
+    _round2(tmp_path, integ, variant="small_gene_nb")
+    m2 = json.loads((tmp_path / "round_02" / "round_manifest.json").read_text())
+    del m2["inspection"]
+    (tmp_path / "round_02" / "round_manifest.json").write_text(json.dumps(m2))
+    # Round 2's sweep wrote to a SIBLING <round>_sweep dir, one architecture.
+    _sweep_inspection(tmp_path / "round_02_sweep", "harmony", 12, 0)
+
+    manifests, parent_map = _load_ordered(tmp_path)
+    by_dir = {m["_dir"]: m for m in manifests}
+    acted_on = {}
+    for m in manifests:
+        pdir = parent_map.get(m["_dir"])
+        v = sr._g(m, "decisions", "filtered_on", "variant")
+        if pdir and v and pdir not in acted_on:
+            acted_on[pdir] = v
+
+    by_id = {m["_round_id"]: m for m in manifests}
+    p, c = by_id["round_01"], by_id["round_02"]
+    row1 = sr.extract_row(p, None, acted_on_variant=acted_on.get(p["_dir"]))
+    row2 = sr.extract_row(c, p, acted_on_variant=acted_on.get(c["_dir"]))
+
+    # Round 1: child filtered on small_gene_nb → that architecture's clusters.
+    assert row1["n_clusters"] == 24
+    assert row1["n_auto_flagged"] == 3
+    assert row1["clusters_variant"] == "small_gene_nb"
+    # Round 2 (terminal): no child; sole sweep architecture is the fallback.
+    assert row2["n_clusters"] == 12
+    assert row2["clusters_variant"] == "harmony"
+
+
+def test_terminal_run_architecture_flag(tmp_path):
+    # Terminal round with multiple sweep architectures and no scIB tiebreak:
+    # clusters are ambiguous until the user pins one.
+    integ = _round1(tmp_path)
+    m1 = json.loads((tmp_path / "round_01" / "round_manifest.json").read_text())
+    del m1["inspection"]
+    (tmp_path / "round_01" / "round_manifest.json").write_text(json.dumps(m1))
+    _sweep_inspection(tmp_path / "round_01", "small_gene_nb", 24, 3)
+
+    # Filter this round on a variant NOT present in its own sweep, so neither
+    # the own-filtered-variant nor the sole-architecture fallback can resolve it.
+    _round2(tmp_path, integ, variant="big_zinb")
+    m2 = json.loads((tmp_path / "round_02" / "round_manifest.json").read_text())
+    del m2["inspection"]
+    (tmp_path / "round_02" / "round_manifest.json").write_text(json.dumps(m2))
+    _sweep_inspection(tmp_path / "round_02_sweep", "harmony", 12, 0)
+    _sweep_inspection(tmp_path / "round_02_sweep", "other", 15, 1)
+
+    manifests, parent_map = _load_ordered(tmp_path)
+    by_id = {m["_round_id"]: m for m in manifests}
+    p, c = by_id["round_01"], by_id["round_02"]
+
+    # Without a pin, the terminal round is ambiguous (two archs, no tiebreak).
+    assert sr.extract_row(c, p, acted_on_variant=None)["n_clusters"] is None
+
+    # Pinned by variant name or cluster key — both resolve.
+    for key in ("harmony", "leiden_harmony"):
+        row = sr.extract_row(c, p, acted_on_variant=sr.variant_from_cluster_key(key))
+        assert row["n_clusters"] == 12
+        assert row["clusters_variant"] == "harmony"
+
+
 def test_verify_flags_drift_and_changed_input(tmp_path):
     integ = _round1(tmp_path)
     _round2(tmp_path, integ, source="auto", input_sha="0" * 64)  # wrong hash
