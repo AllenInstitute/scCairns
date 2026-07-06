@@ -72,7 +72,7 @@ set -ex
 # summarize rounds
 python -u ./summarize_rounds.py \
   --rounds /data/260618_cmg_v2_round1/round_01 /data/260618_cmg_v2_round2/round_02 /data/260622_cmg_v2_round3/rounds/round_03 \
-  --output-dir results/summary --verify \
+  --output-dir /root/capsule/results/summary --verify \
   --terminal-run-architecture leiden_harmony
 
 
