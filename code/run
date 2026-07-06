@@ -44,29 +44,36 @@ set -ex
 # 3: ROUND 3
 # decisions uploaded to: /data/260618_cmg_v2_round2/round_02_sweep/inspect_harmony/decisions_round2.yaml
 
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /data/260618_cmg_v2_round2/round_02/integrated.h5ad \
+#  --cluster-key leiden_harmony \
+#  --decisions /data/260618_cmg_v2_round2/round_02_sweep/inspect_harmony/decisions_round2.yaml \
+#  --output-dir /root/capsule/results/rounds/round_03
 
-python -u ./inspect_integration.py \
-  --config ./pipeline_scvi.yml \
-  --input /data/260618_cmg_v2_round2/round_02/integrated.h5ad \
-  --cluster-key leiden_harmony \
-  --decisions /data/260618_cmg_v2_round2/round_02_sweep/inspect_harmony/decisions_round2.yaml \
-  --output-dir /root/capsule/results/rounds/round_03
+# 3b. integration
+#python -u ./integrate_sns_scvi.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_03/filtered.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_03
 
-# 2b. integration
-python -u ./integrate_sns_scvi.py \
-  --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_03/filtered.h5ad \
-  --output-dir /root/capsule/results/rounds/round_03
-
-# 2c. inspection report
-python -u ./inspect_integration.py \
-  --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_03/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_03_sweep \
-  --all-sweep-architectures
-
+# 3c. inspection report
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_03/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_03_sweep \
+#  --all-sweep-architectures
 
 # ========================================= #
+
+# 4: SUMMARIZE ROUNDS
+# from /data/260622_cmg_v2_round3
+
+# summarize rounds
+python -u ./summarize_rounds.py \
+  --rounds /data/260618_cmg_v2_round1/round_01 /data/260618_cmg_v2_round2/round_02 /data/260622_cmg_v2_round3/rounds/round_03 \
+  --output-dir results/summary --verify
+
 
 
 
