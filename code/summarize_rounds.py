@@ -267,25 +267,32 @@ def read_scib(round_dir: str) -> Optional[pd.DataFrame]:
     return df
 
 
-def scib_scores(round_dir: str) -> Dict[str, float]:
-    """Return {variant: Total score} for each benchmarked embedding."""
+# scib-metrics aggregate columns, best-to-worst. "Total" only exists when both
+# metric families ran; annotation-free runs (no label_key) compute batch metrics
+# only, so their best available aggregate is "Batch correction".
+_SCIB_AGGREGATE_COLUMNS = ("Total", "total", "Batch correction", "Bio conservation")
+
+
+def scib_scores(round_dir: str) -> "tuple[Dict[str, float], Optional[str]]":
+    """Return ({variant: aggregate score}, aggregate_column_name).
+
+    Prefers the overall ``Total`` score; falls back to whichever aggregate the
+    benchmark actually produced (annotation-free runs only have ``Batch
+    correction``). Returns ``({}, None)`` when no aggregate column is present.
+    """
     df = read_scib(round_dir)
     if df is None:
-        return {}
-    total_col = None
-    for cand in ("Total", "total"):
-        if cand in df.columns:
-            total_col = cand
-            break
-    if total_col is None:
-        return {}
+        return {}, None
+    agg_col = next((c for c in _SCIB_AGGREGATE_COLUMNS if c in df.columns), None)
+    if agg_col is None:
+        return {}, None
     scores = {}
-    for emb, val in df[total_col].items():
+    for emb, val in df[agg_col].items():
         try:
             scores[variant_from_embedding_key(str(emb))] = round(float(val), 4)
         except (TypeError, ValueError):
             continue
-    return scores
+    return scores, agg_col
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -334,7 +341,8 @@ def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None,
     scvi_variants = [variant_from_embedding_key(k) for k in embedding_keys
                      if k.startswith("X_scVI_") or k == "X_scVI"]
 
-    own_best_variant, own_best_score = _best_integrated(scib_scores(m["_dir"]))
+    own_scores, own_scib_metric = scib_scores(m["_dir"])
+    own_best_variant, own_best_score = _best_integrated(own_scores)
 
     # Inspection (clusters/flagged) is written per-architecture into
     # inspect_<arch>/ sweep manifests, not the round's own manifest. Choose the
@@ -359,7 +367,7 @@ def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None,
     # filtering choice was actually made.
     sel_score = sel_best_variant = sel_best_score = sel_is_best = None
     if selected_variant and parent is not None:
-        parent_scores = scib_scores(parent["_dir"])
+        parent_scores, _ = scib_scores(parent["_dir"])
         sel_score = parent_scores.get(selected_variant)
         sel_best_variant, sel_best_score = _best_integrated(parent_scores)
         if sel_best_variant is not None:
@@ -397,6 +405,7 @@ def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None,
         "filter_cluster_key": filtered_on.get("cluster_key") or dec.get("cluster_key"),
         "scib_best": own_best_score,
         "scib_best_variant": own_best_variant,
+        "scib_metric": own_scib_metric,
         "scib_selected": sel_score,
         "scib_selected_best": sel_best_score,
         "scib_selected_best_variant": sel_best_variant,
@@ -620,6 +629,19 @@ def _attr(val: Any) -> str:
     return escape(str(val), quote=True)
 
 
+def _scib_metric_tag(metric: Optional[str]) -> str:
+    """Suffix flagging a non-Total scIB aggregate (e.g. batch-only runs).
+
+    The "scIB best" score is a full Total only when both metric families ran;
+    annotation-free runs report "Batch correction" instead. Tag those so the
+    number isn't mistaken for a Total.
+    """
+    if not metric or metric.lower() == "total":
+        return ""
+    short = {"Batch correction": "batch", "Bio conservation": "bio"}
+    return f" ({short.get(metric, metric)})"
+
+
 def render_markdown_table(rows: List[Dict[str, Any]]) -> str:
     headers = [label for _, label in TABLE_COLUMNS]
     lines = ["| " + " | ".join(headers) + " |",
@@ -632,6 +654,8 @@ def render_markdown_table(rows: List[Dict[str, Any]]) -> str:
                 v += " ⚠"
             if key == "filter_source" and r.get(key) == "auto":
                 v += " ⚠"
+            if key == "scib_best" and r.get("scib_best") is not None:
+                v += _scib_metric_tag(r.get("scib_metric"))
             cells.append(v)
         lines.append("| " + " | ".join(cells) + " |")
     return "\n".join(lines)
@@ -653,7 +677,9 @@ def render_mermaid(manifests: List[Dict[str, Any]],
             f"seed {_fmt(row.get('seed'))} · {_fmt(row.get('commit'))}",
         ]
         if row.get("scib_best") is not None:
-            label_bits.append(f"scIB {row['scib_best']} ({row.get('scib_best_variant')})")
+            label_bits.append(f"scIB {row['scib_best']}"
+                              f"{_scib_metric_tag(row.get('scib_metric'))} "
+                              f"({row.get('scib_best_variant')})")
         lines.append(f'    {node_id[m["_dir"]]}["{"<br/>".join(label_bits)}"]:::{cls}')
     for m in manifests:
         parent_dir = parent_map.get(m["_dir"])
@@ -829,6 +855,8 @@ def _render_rounds_table(rows: List[Dict[str, Any]]) -> str:
             if key == "filter_source" and r.get(key) == "auto":
                 v += " !"
                 cls += " warn"
+            if key == "scib_best" and r.get("scib_best") is not None:
+                v += _scib_metric_tag(r.get("scib_metric"))
             title = ""
             if key == "n_variants" and r.get("variants"):
                 title = f" title='{_attr(r.get('variants'))}'"
@@ -902,7 +930,8 @@ def _render_round_cards(rows: List[Dict[str, Any]]) -> str:
             ("Output cells", _fmt(r.get("output_cells"))),
             ("Removed", f"{_fmt(r.get('removed'))} ({_fmt_pct(r.get('removal_pct'))})"),
             ("Filter key", _fmt(r.get("filter_cluster_key"))),
-            ("scIB best", f"{_fmt(r.get('scib_best'))} ({_fmt(r.get('scib_best_variant'))})"),
+            ("scIB best", f"{_fmt(r.get('scib_best'))}{_scib_metric_tag(r.get('scib_metric'))}"
+                          f" ({_fmt(r.get('scib_best_variant'))})"),
             ("Selected / parent best", _fmt(r.get("scib_sel_vs_best"))),
         ]
         detail = "".join(
