@@ -242,3 +242,28 @@ def test_clean_run_has_no_findings(tmp_path):
     manifests, parent_map = _load_ordered(tmp_path)
     findings = sr.verify(manifests, parent_map, scan_dir=str(tmp_path))
     assert findings == []
+
+
+def test_html_report_includes_full_featured_sections(tmp_path):
+    integ = _round1(tmp_path)
+    _round2(tmp_path, integ)
+    manifests, parent_map = _load_ordered(tmp_path)
+    by_dir = {m["_dir"]: m for m in manifests}
+
+    rows = []
+    for m in manifests:
+        pdir = parent_map.get(m["_dir"])
+        rows.append(sr.extract_row(m, by_dir.get(pdir) if pdir else None))
+    rows_by_dir = {m["_dir"]: r for m, r in zip(manifests, rows)}
+    mermaid_src = sr.render_mermaid(manifests, rows_by_dir, parent_map)
+    ledger = sr.extract_decisions_ledger(manifests)
+
+    html = sr.render_html(rows, mermaid_src, [], True, ledger)
+
+    assert "Cells retained" in html
+    assert "Retention" in html
+    assert "Round details" in html
+    assert "Decisions ledger" in html
+    assert "remove_cluster: 7 (-2000)" in html
+    assert "48,210 start cells to 44,933 final cells" in html
+    assert "No integrity issues detected" in html
