@@ -58,15 +58,24 @@ set -ex
 #  --output-dir /root/capsule/results/rounds/round_03
 
 # 3c. inspection report
-python -u ./inspect_integration.py \
-  --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_03/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_03_sweep \
-  --all-sweep-architectures
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_03/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_03_sweep \
+#  --all-sweep-architectures
 
 # ========================================= #
 
-# 4: SUMMARIZE ROUNDS
+# 4: Identified contaminants in the round_3 object. Introduced new flag_contamination.py script.
+# Re-run inspect on the round 3 object
+python -u ./inspect_integration.py \
+  --config ./pipeline_scvi.yml \
+  --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
+  --output-dir /root/capsule/results/rounds/round_03_inspect_cells \
+  --all-sweep-architectures
+
+
+# 5: SUMMARIZE ROUNDS
 # from /data/260622_cmg_v2_round3
 
 # summarize rounds
