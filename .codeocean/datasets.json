@@ -2,6 +2,10 @@
 	"version": 1,
 	"attached_datasets": [
 		{
+			"id": "145cc810-73d1-4b55-b155-2d3bbc58c29c",
+			"mount": "2607708_cmg_v2_round_03b_inspect_cells"
+		},
+		{
 			"id": "1ce41721-3cf1-4065-a868-948778934f0e",
 			"mount": "260603_cmg_round2"
 		},
