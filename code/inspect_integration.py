@@ -1558,12 +1558,14 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         print("  [WARN] adata.X looks like raw counts (max > 50); contamination "
               "z-scores assume log-normalized expression. Set "
               "inspection.contamination.layer to a log-normalized layer if needed.")
-    contam_flags = flag_contamination(
-        adata,
+    contam_kwargs = dict(
         z_thresh=contam_cfg.get("z_thresh", 2.0),
         min_genes=contam_cfg.get("min_genes", 2),
         layer=contam_layer,
     )
+    if contam_cfg.get("panels"):  # else flag_contamination's built-in defaults
+        contam_kwargs["panels"] = contam_cfg["panels"]
+    contam_flags = flag_contamination(adata, **contam_kwargs)
     contam_flags.to_csv(os.path.join(output_dir, "contamination_zscore.csv"))
     flagged_ids = contam_flags.index[contam_flags["flag_any_contam"]]
     flagged_ids.to_series().to_csv(

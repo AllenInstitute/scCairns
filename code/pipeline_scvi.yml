@@ -139,6 +139,18 @@ inspection:
     min_cells: 20
     single_batch_threshold: 0.90
     silhouette_threshold: -0.05
+  # Marker-based per-cell contamination flagging (cluster-independent).
+  # Writes contamination_zscore.csv and contamination_flagged_cells.csv per
+  # report; reference the latter from decisions.yaml via remove_cells.cells_file.
+  contamination:
+    z_thresh: 2.0
+    min_genes: 2
+    layer: null          # null -> adata.X (log-normalized)
+    # panels: null omits the key -> flag_contamination's built-in mouse SNS
+    # panels (endothelial, hepatic). Override with your own lineages:
+    # panels:
+    #   endothelial: [Flt1, Kdr, Emcn, Cdh5, Pecam1]
+    #   hepatic:     [Slco1a1, Slco1a4, G6pc, Mug1, Ugt2b1]
 
 benchmark:
   enabled: true
