@@ -90,6 +90,8 @@ from pipeline_config import (
     write_yaml_record,
 )
 
+from flag_contamination import flag_contamination
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  Model key extraction
@@ -1103,10 +1105,15 @@ def write_auto_flags_yaml(flags, summary_df, output_path, thresholds,
         "#   - query: \"n_genes_by_counts > 500\"",
         "#     reason: \"Minimum gene complexity\"",
         "",
-        "# Uncomment and edit to remove specific cells by query:",
+        "# Uncomment and edit to remove specific cells. Each entry is either a",
+        "# pandas query (obs.eval) or a cells_file (one obs_name per line, no",
+        "# header — e.g. the contamination_flagged_cells.csv written this round).",
+        "# cells_file paths are resolved relative to this decisions file.",
         "# remove_cells:",
         "#   - query: \"(tech == 'scale') & (neuron_type.isin(['GABAergic']))\"",
         "#     reason: \"Contaminating non-target neurons\"",
+        "#   - cells_file: \"contamination_flagged_cells.csv\"",
+        "#     reason: \"Marker-based z-score contamination flags\"",
         "",
         "notes: \"\"",
     ])
@@ -1534,6 +1541,38 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         })
     print("  Saved auto_flags.yaml")
 
+    # 4b. Marker-based contamination flags (per-cell, cluster-independent)
+    #
+    # Cluster-agnostic complement to the cluster auto-flags above: z-scores each
+    # contamination-panel gene across cells and flags co-expressing outliers.
+    # Two artifacts are written to this round's output_dir:
+    #   contamination_zscore.csv         full per-cell scores/flags (with header)
+    #   contamination_flagged_cells.csv  flagged obs_names only, one per line,
+    #                                    no header — the WhichCells-style list you
+    #                                    reference from decisions.yaml via a
+    #                                    `remove_cells: [{cells_file: ...}]` entry.
+    print("\n  Flagging marker-based contamination (per-cell z-scores)...")
+    contam_cfg = inspection_cfg.get("contamination") or {}
+    contam_layer = contam_cfg.get("layer")  # None → adata.X (log-normalized)
+    if contam_layer is None and hasattr(adata.X, "max") and adata.X.max() > 50:
+        print("  [WARN] adata.X looks like raw counts (max > 50); contamination "
+              "z-scores assume log-normalized expression. Set "
+              "inspection.contamination.layer to a log-normalized layer if needed.")
+    contam_flags = flag_contamination(
+        adata,
+        z_thresh=contam_cfg.get("z_thresh", 2.0),
+        min_genes=contam_cfg.get("min_genes", 2),
+        layer=contam_layer,
+    )
+    contam_flags.to_csv(os.path.join(output_dir, "contamination_zscore.csv"))
+    flagged_ids = contam_flags.index[contam_flags["flag_any_contam"]]
+    flagged_ids.to_series().to_csv(
+        os.path.join(output_dir, "contamination_flagged_cells.csv"),
+        header=False, index=False)
+    n_contam = int(contam_flags["flag_any_contam"].sum())
+    print(f"  Saved contamination_zscore.csv and contamination_flagged_cells.csv "
+          f"({n_contam} cells flagged)")
+
     # 5. Plots
     print("\n  Generating diagnostic plots...")
     images = {}
@@ -1644,6 +1683,7 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
             "thresholds": thresholds,
             "n_clusters": len(summary),
             "n_auto_flagged": len(flags),
+            "n_contamination_flagged": n_contam,
             "annotation_prediction_key": prediction_key,
             "annotation_confidence_key": confidence_key,
         },
@@ -1737,6 +1777,44 @@ def write_filtering_retention_summary(adata, keep, output_dir, cluster_key=None,
     return output_path
 
 
+_CELL_ID_HEADERS = {"obs_name", "obs_names", "cell", "cell_id", "barcode", ""}
+
+
+def _resolve_cells_file(cells_file, decisions_path):
+    """Resolve a cells_file path, trying it relative to the decisions file dir.
+
+    Absolute paths and paths that exist as given are returned unchanged.
+    Otherwise the path is interpreted relative to the directory holding the
+    decisions.yaml (so a decisions file can reference a sibling
+    ``contamination_flagged_cells.csv`` without an absolute path).
+    """
+    p = Path(cells_file)
+    if p.is_absolute() or p.exists():
+        return str(p)
+    if decisions_path:
+        candidate = Path(decisions_path).parent / cells_file
+        if candidate.exists():
+            return str(candidate)
+    return cells_file  # fall through so the caller raises a clear error
+
+
+def _load_cell_ids(path):
+    """Read a one-column CSV of cell (obs) names; tolerate an optional header.
+
+    Matches the headerless format written by run_inspection_report
+    (``contamination_flagged_cells.csv``) as well as files that carry a leading
+    ``obs_name``/``barcode``-style header row. An empty file (e.g. a round that
+    flagged no cells) is treated as an empty selection, not an error.
+    """
+    try:
+        s = pd.read_csv(path, header=None).iloc[:, 0].astype(str).str.strip()
+    except pd.errors.EmptyDataError:
+        return []
+    if len(s) and s.iloc[0].lower() in _CELL_ID_HEADERS:
+        s = s.iloc[1:]
+    return s.tolist()
+
+
 def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
                     output_dir=".", ignore_failed_queries=False,
                     input_path=None, seed=None, decisions_path=None,
@@ -1748,6 +1826,11 @@ def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
       2. keep_cells     — restrict to cells matching each query (AND-chained)
       3. remove_clusters — drop cluster IDs from the retained set
       4. remove_cells   — drop cells matching each query from the retained set
+
+    ``keep_cells`` / ``remove_cells`` entries accept either a ``query`` (a
+    pandas ``obs.eval`` expression) or a ``cells_file`` (path to a one-column
+    CSV of obs_names, e.g. contamination_flagged_cells.csv). ``cells_file``
+    paths are resolved relative to the decisions file when not absolute.
 
     Writes:
       - cells_to_keep.csv
@@ -1781,8 +1864,34 @@ def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
 
     # ── Keep cells (restrict by query, AND-chained) ──────────────────────────
     for entry in decisions.get("keep_cells", []):
-        query = entry["query"]
         reason = entry.get("reason", "")
+        if entry.get("cells_file"):
+            cells_file = _resolve_cells_file(entry["cells_file"], decisions_path)
+            try:
+                ids = _load_cell_ids(cells_file)
+            except Exception as e:
+                msg = f"Keep cells_file failed to load: {entry['cells_file']} — {e}"
+                if ignore_failed_queries:
+                    print(f"  [WARN] {msg}")
+                    continue
+                raise ValueError(msg) from e
+            member = pd.Series(adata.obs_names.isin(ids), index=adata.obs_names)
+            n_missing = len(set(ids) - set(adata.obs_names))
+            n_excluded = int((~member & keep).sum())
+            keep &= member
+            log_entries.append({
+                "type": "keep_cells_file",
+                "cells_file": entry["cells_file"],
+                "n_listed": len(ids),
+                "n_missing": n_missing,
+                "n_excluded": n_excluded,
+                "reason": reason,
+            })
+            miss = f", {n_missing} listed IDs not in object" if n_missing else ""
+            print(f"  Keep cells_file '{entry['cells_file']}': "
+                  f"{n_excluded:,} cells excluded ({reason}){miss}")
+            continue
+        query = entry["query"]
         try:
             query_mask = adata.obs.eval(query)
             n_excluded = int((~query_mask & keep).sum())
@@ -1819,10 +1928,36 @@ def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
         })
         print(f"  Remove cluster {cl}: {n_removed:,} cells ({reasons})")
 
-    # ── Remove cells by query ────────────────────────────────────────────────
+    # ── Remove cells by query or cell-ID file ────────────────────────────────
     for entry in decisions.get("remove_cells", []):
-        query = entry["query"]
         reason = entry.get("reason", "")
+        if entry.get("cells_file"):
+            cells_file = _resolve_cells_file(entry["cells_file"], decisions_path)
+            try:
+                ids = _load_cell_ids(cells_file)
+            except Exception as e:
+                msg = f"Remove cells_file failed to load: {entry['cells_file']} — {e}"
+                if ignore_failed_queries:
+                    print(f"  [WARN] {msg}")
+                    continue
+                raise ValueError(msg) from e
+            member = pd.Series(adata.obs_names.isin(ids), index=adata.obs_names)
+            n_missing = len(set(ids) - set(adata.obs_names))
+            n_removed = int((member & keep).sum())
+            keep[member] = False
+            log_entries.append({
+                "type": "remove_cells_file",
+                "cells_file": entry["cells_file"],
+                "n_listed": len(ids),
+                "n_missing": n_missing,
+                "n_removed": n_removed,
+                "reason": reason,
+            })
+            miss = f", {n_missing} listed IDs not in object" if n_missing else ""
+            print(f"  Remove cells_file '{entry['cells_file']}': "
+                  f"{n_removed:,} cells ({reason}){miss}")
+            continue
+        query = entry["query"]
         try:
             query_mask = adata.obs.eval(query)
             n_removed = int((query_mask & keep).sum())
@@ -1882,6 +2017,10 @@ def apply_decisions(adata, decisions, cluster_key="leiden", batch_key=None,
             return f"keep_clusters {a['clusters']} (-{a.get('n_excluded', 0)})"
         if a["type"] == "keep_query":
             return f"keep_query: {a.get('query', '?')} (-{a.get('n_excluded', 0)})"
+        if a["type"] == "keep_cells_file":
+            return f"keep_cells_file: {a.get('cells_file', '?')} (-{a.get('n_excluded', 0)})"
+        if a["type"] == "remove_cells_file":
+            return f"remove_cells_file: {a.get('cells_file', '?')} (-{a.get('n_removed', 0)})"
         return (f"{a['type']}: {a.get('cluster', a.get('query', '?'))} "
                 f"(-{a.get('n_removed', 0)})")
 
