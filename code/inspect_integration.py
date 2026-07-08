@@ -90,7 +90,7 @@ from pipeline_config import (
     write_yaml_record,
 )
 
-from flag_contamination import flag_contamination
+from flag_contamination import DEFAULT_CONTAM_PANELS, flag_contamination
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -775,6 +775,149 @@ def plot_umap_overview(adata, cluster_key, batch_key, output_dir,
                 dpi=150, bbox_inches="tight")
     b64 = _fig_to_base64(fig)
     return b64
+
+
+# Colorblind-friendly palette for contamination panels; grey is reserved for
+# unflagged cells and black for cells flagged by more than one panel.
+CONTAM_PANEL_COLORS = ["#D81B60", "#1E88E5", "#FFC107", "#004D40",
+                       "#8E24AA", "#F4511E", "#00ACC1", "#6D4C41"]
+
+
+def _contam_panel_labels(contam_flags, panels):
+    """Panel labels that actually produced a flag column, in panel order."""
+    return [p for p in panels if f"flag_{p}" in contam_flags.columns]
+
+
+def _dense_expression(adata, gene, layer=None):
+    """Dense 1-D expression vector for `gene` from adata.X or a layer."""
+    import scipy.sparse as sp
+    j = adata.var_names.get_loc(gene)
+    X = adata.X if layer is None else adata.layers[layer]
+    col = X[:, j]
+    if sp.issparse(col):
+        col = col.toarray().ravel()
+    return np.asarray(col).ravel().astype(float)
+
+
+def plot_contamination_umap(adata, contam_flags, panels, output_dir,
+                            umap_key="X_umap"):
+    """UMAP marking contamination-flagged cells by panel.
+
+    Grey = unflagged; one panel colour per contamination panel; black = cells
+    flagged by more than one panel. Flagged cells are drawn on top of the grey
+    background layer so they stay visible even when rare.
+    """
+    if umap_key not in adata.obsm:
+        print(f"  [WARN] '{umap_key}' not in obsm — skipping contamination UMAP.")
+        return None
+    labels = _contam_panel_labels(contam_flags, panels)
+    if not labels:
+        return None
+
+    coords = np.asarray(adata.obsm[umap_key])[:, :2]
+    flag_mat = np.column_stack(
+        [contam_flags[f"flag_{p}"].values.astype(bool) for p in labels])
+    n_hits = flag_mat.sum(axis=1)
+
+    category = np.array(["unflagged"] * adata.n_obs, dtype=object)
+    for j, p in enumerate(labels):
+        category[flag_mat[:, j]] = p
+    category[n_hits > 1] = "multiple"
+
+    color_map = {"unflagged": "#D9D9D9", "multiple": "#000000"}
+    for j, p in enumerate(labels):
+        color_map[p] = CONTAM_PANEL_COLORS[j % len(CONTAM_PANEL_COLORS)]
+
+    draw_order = ["unflagged"] + labels + ["multiple"]
+    fig, ax = plt.subplots(figsize=(8, 7))
+    for name in draw_order:
+        mask = category == name
+        if not mask.any():
+            continue
+        is_bg = name == "unflagged"
+        ax.scatter(coords[mask, 0], coords[mask, 1],
+                   s=4 if is_bg else 16, c=color_map[name],
+                   label=f"{name} ({int(mask.sum())})", linewidths=0,
+                   alpha=0.5 if is_bg else 0.9, zorder=1 if is_bg else 3,
+                   rasterized=True)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_xlabel("UMAP1")
+    ax.set_ylabel("UMAP2")
+    ax.set_title("Contamination flags on UMAP")
+    ax.legend(loc="best", fontsize=8, markerscale=2, frameon=True)
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "contamination_umap.png"),
+                dpi=150, bbox_inches="tight")
+    return _fig_to_base64(fig)
+
+
+def plot_contamination_marker_boxplots(adata, contam_flags, panels, output_dir,
+                                       layer=None):
+    """Boxplots of marker expression in flagged vs unflagged cells, per panel.
+
+    One subplot per panel; within each, every present panel gene gets an
+    unflagged/flagged box pair on the same (log-normalized) expression used for
+    scoring. "Flagged" means flagged for that panel. Confirms that flagged cells
+    are the ones actually driving up the marker expression.
+    """
+    from matplotlib.patches import Patch
+
+    labels = _contam_panel_labels(contam_flags, panels)
+    panel_genes = {}
+    for p in labels:
+        present = [g for g in panels[p] if g in adata.var_names]
+        if present and bool(contam_flags[f"flag_{p}"].any()):
+            panel_genes[p] = present
+    if not panel_genes:
+        print("  [INFO] No panel had flagged cells — skipping contamination "
+              "marker boxplots.")
+        return None
+
+    unflag_c, flag_c = "#BDBDBD", "#D81B60"
+    n_boxes = sum(len(g) for g in panel_genes.values())
+    fig, axes = plt.subplots(
+        1, len(panel_genes),
+        figsize=(max(5, n_boxes * 1.15 + 1), 4.5), squeeze=False)
+    axes = axes[0]
+
+    for ax, (p, genes) in zip(axes, panel_genes.items()):
+        flag_mask = contam_flags[f"flag_{p}"].values.astype(bool)
+        data, positions, colors, ticks = [], [], [], []
+        pos = 0.0
+        for g in genes:
+            e = _dense_expression(adata, g, layer=layer)
+            for grp_mask, c, off in ((~flag_mask, unflag_c, 0.0),
+                                     (flag_mask, flag_c, 0.8)):
+                vals = e[grp_mask]
+                data.append(vals if vals.size else np.array([np.nan]))
+                positions.append(pos + off)
+                colors.append(c)
+            ticks.append((pos + 0.4, g))
+            pos += 2.0
+        bp = ax.boxplot(data, positions=positions, widths=0.7,
+                        patch_artist=True, showfliers=False)
+        for patch, c in zip(bp["boxes"], colors):
+            patch.set_facecolor(c)
+            patch.set_alpha(0.85)
+        for median in bp["medians"]:
+            median.set_color("black")
+        ax.set_xticks([t[0] for t in ticks])
+        ax.set_xticklabels([t[1] for t in ticks], rotation=45, ha="right",
+                           fontsize=8)
+        ax.set_title(f"{p} (n flagged = {int(flag_mask.sum())})", fontsize=10)
+        ax.set_ylabel("log-norm expression")
+
+    handles = [Patch(facecolor=unflag_c, label="unflagged"),
+               Patch(facecolor=flag_c, label="flagged")]
+    fig.legend(handles=handles, loc="upper right", fontsize=8)
+    fig.suptitle("Marker expression: flagged vs unflagged cells", y=1.02)
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "contamination_marker_boxplots.png"),
+                dpi=150, bbox_inches="tight")
+    return _fig_to_base64(fig)
 
 
 def plot_annotation_umaps(adata, prediction_key, confidence_key, output_dir,
@@ -1558,14 +1701,14 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         print("  [WARN] adata.X looks like raw counts (max > 50); contamination "
               "z-scores assume log-normalized expression. Set "
               "inspection.contamination.layer to a log-normalized layer if needed.")
-    contam_kwargs = dict(
+    contam_panels = contam_cfg.get("panels") or DEFAULT_CONTAM_PANELS
+    contam_flags = flag_contamination(
+        adata,
+        panels=contam_panels,
         z_thresh=contam_cfg.get("z_thresh", 2.0),
         min_genes=contam_cfg.get("min_genes", 2),
         layer=contam_layer,
     )
-    if contam_cfg.get("panels"):  # else flag_contamination's built-in defaults
-        contam_kwargs["panels"] = contam_cfg["panels"]
-    contam_flags = flag_contamination(adata, **contam_kwargs)
     contam_flags.to_csv(os.path.join(output_dir, "contamination_zscore.csv"))
     flagged_ids = contam_flags.index[contam_flags["flag_any_contam"]]
     flagged_ids.to_series().to_csv(
@@ -1582,6 +1725,14 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
     images["UMAP Overview"] = plot_umap_overview(
         adata, cluster_key, batch_key, output_dir,
         umap_key=umap_key or "X_umap")
+
+    images["Contamination Flags (UMAP)"] = plot_contamination_umap(
+        adata, contam_flags, contam_panels, output_dir,
+        umap_key=umap_key or "X_umap")
+
+    images["Contamination Markers (flagged vs unflagged)"] = (
+        plot_contamination_marker_boxplots(
+            adata, contam_flags, contam_panels, output_dir, layer=contam_layer))
 
     images["QC Summary Heatmap"] = plot_qc_summary_heatmap(
         summary, flags, output_dir)
