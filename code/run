@@ -83,9 +83,10 @@ set -ex
 python -u ./inspect_integration.py \
   --config ./pipeline_scvi.yml \
   --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
+  --cluster-key leiden_harmony \
   --decisions /data/2607708_cmg_v2_round_03b_inspect_cells/inspect_harmony/decisions_round3b_flag_cells.yaml \
-  --output-dir /root/capsule/results/rounds/round_04_filter_cells \
-  --all-sweep-architectures
+  --output-dir /root/capsule/results/rounds/round_04_filter_cells 
+  
 
 
 # 5: SUMMARIZE ROUNDS
