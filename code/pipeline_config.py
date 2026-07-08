@@ -138,6 +138,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "single_batch_threshold": 0.90,
             "silhouette_threshold": -0.05,
         },
+        # Marker-based per-cell contamination flagging (cluster-independent).
+        # panels defaults to flag_contamination.DEFAULT_CONTAM_PANELS when unset;
+        # override with {label: [gene, ...]} to score custom lineages.
+        "contamination": {
+            "z_thresh": 2.0,
+            "min_genes": 2,
+            "layer": None,   # None → adata.X (log-normalized)
+            "panels": None,
+        },
     },
     "benchmark": {
         "enabled": True,
