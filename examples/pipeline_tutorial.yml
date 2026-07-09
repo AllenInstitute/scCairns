@@ -1,0 +1,90 @@
+pipeline_version: 1
+
+# Fast config for the tutorial's synthetic dataset (docs/tutorial.md).
+# It is deliberately small so scVI trains in a minute or two on a laptop CPU.
+# For real data start from pipeline_scvi.yml (SNS/mouse) or pipeline_generic.yml.
+
+reproducibility:
+  seed: 0
+
+data:
+  # Written by: python examples/make_example_data.py
+  # Path is resolved relative to THIS config file's location.
+  input_h5ad: example_data/combined_example.h5ad
+  output_dir: tutorial_run/rounds/round_01
+  counts_layer: counts
+  batch_key: data_origin          # the biological/sample batch to integrate over
+  categorical_covariate_keys: [tech]   # extra nuisance covariate(s)
+  continuous_covariate_keys: []
+  technology_key: tech
+  species: mouse
+  gene_symbol_case: preserve
+
+qc:
+  enabled: true
+  min_genes: 200                  # lower than the SNS default (500) for the tiny dataset
+  min_cells: 3
+  mt_gene_patterns: ["mt-"]
+  ribo_gene_patterns: ["rps", "rpl"]
+  hb_gene_pattern: "^hb[^(p)]"
+  skip_filter_after_round_1: true
+
+integration:
+  model_type: scvi
+  n_hidden: 64                    # small + shallow so CPU training is quick
+  n_layers: 1
+  n_latent: 10
+  dispersion: gene
+  gene_likelihood: nb
+  max_epochs: 40                  # plenty for the toy data; bump up for real data
+  early_stopping_patience: 10
+  batch_size: 256
+  num_workers: 0
+  hvg:
+    n_top_genes: 800
+    batch_key: tech
+    flavor: seurat_v3
+    min_batches: null
+  sweep: []
+  harmony:
+    enabled: false                # set true for a same-run scVI-vs-Harmony
+                                   # comparison (requires the harmonypy package)
+    batch_key: null
+    n_pcs: 20
+
+annotation:
+  enabled: false
+
+embedding:
+  n_neighbors: 15
+  umap_min_dist: 0.4
+  umap_spread: 3.0
+  leiden_resolution: 0.4
+
+inspection:
+  cluster_key: auto
+  latent_key: auto
+  umap_key: auto
+  auto_flag:
+    mt_threshold: 15.0
+    min_genes_threshold: 200
+    min_cells: 20
+    single_batch_threshold: 0.90
+    silhouette_threshold: -0.05
+  contamination:
+    z_thresh: 2.0
+    min_genes: 2
+    layer: null
+    # The synthetic data includes cells expressing these panels, so the default
+    # mouse panels below (from flag_contamination.py) find real targets.
+    # panels:
+    #   endothelial: [Flt1, Kdr, Emcn, Cdh5, Pecam1]
+    #   hepatic:     [Slco1a1, Slco1a4, G6pc, Mug1, Ugt2b1]
+
+benchmark:
+  enabled: true
+  batch_key: auto
+  label_key: null
+
+decisions:
+  ignore_failed_queries: false
