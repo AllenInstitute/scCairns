@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Post-integration inspection and iterative refinement.
 
-Companion to integrate_sns_scvi.py.  Generates a diagnostic report from an
+Companion to integrate_scvi.py.  Generates a diagnostic report from an
 integrated h5ad, auto-flags suspicious clusters, and supports a
 decisions.yaml workflow for reproducible iterative filtering.
 
@@ -149,7 +149,7 @@ def extract_keys_from_model(model_dir):
     """Read batch_key and covariate_keys from a saved scVI model directory.
 
     Tries attr_dict.json first (scvi-tools >= 0.20, the format produced by
-    integrate_sns_scvi.py).  Falls back to loading model.pt directly via
+    integrate_scvi.py).  Falls back to loading model.pt directly via
     torch for models saved with older scvi-tools versions where attr_dict.json
     was not written.
 
@@ -2237,13 +2237,13 @@ Examples:
       --markers my_markers.json
 
 Typical iterative cycle:
-  1. python integrate_sns_scvi.py --input data.h5ad --output-dir round_01/
+  1. python integrate_scvi.py --input data.h5ad --output-dir round_01/
   2. python inspect_integration.py --input round_01/integrated.h5ad \\
          --output-dir round_01/
   3. Edit round_01/auto_flags.yaml → save as round_01/decisions.yaml
   4. python inspect_integration.py --input round_01/integrated.h5ad \\
          --decisions round_01/decisions.yaml --output-dir round_02/
-  5. python integrate_sns_scvi.py --input round_02/filtered.h5ad \\
+  5. python integrate_scvi.py --input round_02/filtered.h5ad \\
          --output-dir round_02/ --skip-qc-filter
 """,
     )

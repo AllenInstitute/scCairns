@@ -1,0 +1,111 @@
+pipeline_version: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GENERIC / NON-SNS TEMPLATE
+#
+# The pipeline engine is dataset-agnostic; only the *defaults* are mouse-SNS
+# flavored. This template shows every knob you need to touch to run on your own
+# organism/tissue. See docs/adapting-to-your-data.md for the full rationale.
+#
+# Replace every value marked  # <-- EDIT  before running.
+# ─────────────────────────────────────────────────────────────────────────────
+
+reproducibility:
+  seed: 0
+
+data:
+  input_h5ad: data/my_combined.h5ad   # <-- EDIT: raw counts in .X or layers["counts"]
+  output_dir: rounds/round_01          # <-- EDIT
+  counts_layer: counts
+  batch_key: sample                    # <-- EDIT: the obs column to integrate over
+  categorical_covariate_keys: []       # <-- EDIT: extra nuisance covariates, or []
+  continuous_covariate_keys: []
+  technology_key: null
+  species: human                       # <-- EDIT: informational; drive QC via patterns below
+  gene_symbol_case: preserve           # set 'upper'/'lower' if your symbols need normalizing
+
+qc:
+  enabled: true
+  min_genes: 500
+  min_cells: 3
+  # QC gene patterns are REGEX on var_names. The defaults are mouse (lowercase).
+  # For human gene symbols (UPPERCASE), use:
+  mt_gene_patterns: ["^MT-"]           # <-- EDIT for your organism
+  ribo_gene_patterns: ["^RPS", "^RPL"] # <-- EDIT
+  hb_gene_pattern: "^HB[^(P)]"         # <-- EDIT
+  skip_filter_after_round_1: true
+
+integration:
+  model_type: scvi
+  n_hidden: 256
+  n_layers: 3
+  n_latent: 32
+  dispersion: gene-cell
+  gene_likelihood: nb
+  max_epochs: 200
+  early_stopping_patience: 20
+  batch_size: 256
+  num_workers: 4
+  hvg:
+    n_top_genes: 3000
+    batch_key: null                    # <-- set to a covariate to stratify HVGs, or null
+    flavor: seurat_v3
+    min_batches: null
+  sweep: []
+  harmony:
+    enabled: false                     # requires the harmonypy package
+    batch_key: null
+    n_pcs: 30
+
+annotation:
+  enabled: false
+  # To transfer labels, set enabled: true, method: scanvi, and point labels_key
+  # at an obs column of known/seed labels (unlabeled cells = unlabeled_category).
+  method: scanvi
+  labels_key: null                     # <-- EDIT if using scANVI
+  unlabeled_category: Unknown
+  prediction_key: scanvi_label
+  confidence_key: scanvi_confidence
+  min_confidence: 0.5
+
+embedding:
+  n_neighbors: 30
+  umap_min_dist: 0.4
+  umap_spread: 3.0
+  leiden_resolution: 0.3
+
+inspection:
+  cluster_key: auto
+  latent_key: auto
+  umap_key: auto
+  # The marker dotplot defaults to mouse SNS marker sets. Override with your own
+  # panels via a JSON file: {"Group name": ["GENE1", "GENE2", ...], ...}
+  markers_json: null                   # <-- EDIT: path to your markers JSON, or null
+  neuronal_cutoff: 0.5
+  marker_threshold: 0.0
+  auto_flag:
+    mt_threshold: 15.0
+    min_genes_threshold: 400
+    min_cells: 20
+    single_batch_threshold: 0.90
+    silhouette_threshold: -0.05
+  contamination:
+    z_thresh: 2.0
+    min_genes: 2
+    layer: null
+    # The default panels are mouse endothelial/hepatic. For other datasets,
+    # either supply your own off-target lineages here, or leave the whole
+    # contamination scoring unused (just don't reference the flags file in
+    # decisions.yaml). Example human off-target panels:
+    # panels:
+    #   endothelial: [FLT1, KDR, PECAM1, CDH5]
+    #   erythroid:   [HBB, HBA1, HBA2, ALAS2]
+    panels: null                       # <-- EDIT for your off-target lineages, or null
+
+benchmark:
+  enabled: true
+  batch_key: auto
+  label_key: null
+
+decisions:
+  ignore_failed_queries: false

@@ -8,6 +8,30 @@ environment pinning, tests, and git state.
 
 ---
 
+## Update (2026-07): most high-priority gaps are now closed
+
+This evaluation was written against an earlier state of the repo. The reproducibility
+and run-identity gaps it flagged as highest-leverage have since been implemented — so
+read the scorecard and "Gaps" section below as **historical context**, not the current
+state. Mapping of the original gaps to what now exists:
+
+| Original gap | Status | Where |
+|---|---|---|
+| 1. No seed / determinism | **Fixed** | `set_global_seed()` sets `scvi.settings.seed` before every stochastic step; recorded under `reproducibility.seed` in `round_manifest.json`. Leiden cluster IDs are now stable across re-runs of the same config. |
+| 2. No code-version capture | **Fixed** | `collect_code_provenance()` records git commit/branch/`dirty` flag into `manifest["code"]`. |
+| 3. Input identified by path only | **Fixed** | `fingerprint_file()` records path + size + mtime + SHA-256 per stage (`input_fingerprint`). |
+| 4. Implicit cross-round lineage | **Fixed** | `read_parent_provenance()` writes a structured `parent_round` pointer; `summarize_rounds.py --verify` validates hash continuity. |
+| 6. `command_args.json` overwrites | **Fixed** | Now keeps an append-only `history` list of every invocation. |
+| 7. Report decoupled from provenance | **Fixed** | `inspection_report.html` ends with a Run Provenance footer (seed, commit, input SHA-256, package versions). |
+| 8. `decisions_applied.yaml` hand-serialized | **Fixed** | `write_yaml_record()` uses `yaml.safe_dump`. |
+| 5, 9, 10. Package-version breadth, enforced rationale, naive timestamps | **Partly open** | Lower-priority; see below. |
+
+With items 1–4, 6–8 addressed, the pipeline has moved from "well-documented decisions"
+to substantially reproducible traceability. The remaining open items are the
+lower-priority ones. The original analysis is retained below for reference.
+
+---
+
 ## Summary judgment
 
 The repository is **deliberately and competently designed around decision

@@ -6,7 +6,7 @@ Covers:
      under a fixed seed, and does not mutate its input AnnData.
   3. Inspection auto-resolves X_pca_harmony as a latent candidate.
 
-run_harmony lives in integrate_sns_scvi, which imports scvi at module top.
+run_harmony lives in integrate_scvi, which imports scvi at module top.
 scvi is heavy/CUDA and not needed by run_harmony or the validators, so we stub
 it in sys.modules before import. The test is skipped if harmonypy is absent.
 """
@@ -33,7 +33,7 @@ from pipeline_config import (  # noqa: E402
 def stubbed_scvi():
     """Temporarily stub the heavy scvi import for run_harmony tests.
 
-    integrate_sns_scvi imports scvi at module top; run_harmony itself does not
+    integrate_scvi imports scvi at module top; run_harmony itself does not
     use it. We install a stub only for the duration of the test and remove it
     afterward so the fake module cannot leak into other test modules (e.g.
     set_global_seed, which imports scvi and would otherwise treat the stub as a
@@ -48,7 +48,7 @@ def stubbed_scvi():
         yield
     finally:
         # Drop the cached integrate module so a later real import re-runs.
-        sys.modules.pop("integrate_sns_scvi", None)
+        sys.modules.pop("integrate_scvi", None)
         if had:
             sys.modules["scvi"] = saved
         else:
@@ -73,7 +73,7 @@ def test_default_config_has_harmony_block():
 
 # ── HVG-source resolution (the explicit decision that lifts the sweep ban) ───
 def test_resolve_harmony_hvg_spec_default_uses_top_level(stubbed_scvi):
-    import integrate_sns_scvi as isi  # noqa: E402
+    import integrate_scvi as isi  # noqa: E402
 
     integration_cfg = {
         "hvg": {"n_top_genes": 3000, "batch_key": "tech",
@@ -89,7 +89,7 @@ def test_resolve_harmony_hvg_spec_default_uses_top_level(stubbed_scvi):
 def test_resolve_harmony_hvg_spec_borrows_sweep_entry(stubbed_scvi):
     import types as _types
 
-    import integrate_sns_scvi as isi  # noqa: E402
+    import integrate_scvi as isi  # noqa: E402
 
     integration_cfg = {
         "hvg": {"n_top_genes": 3000, "batch_key": "tech",
@@ -110,7 +110,7 @@ def test_resolve_harmony_hvg_spec_borrows_sweep_entry(stubbed_scvi):
 
 
 def test_resolve_harmony_hvg_spec_unknown_entry_raises(stubbed_scvi):
-    import integrate_sns_scvi as isi  # noqa: E402
+    import integrate_scvi as isi  # noqa: E402
 
     integration_cfg = {"hvg": {"n_top_genes": 3000, "batch_key": "tech",
                                "flavor": "seurat_v3", "min_batches": None}}
@@ -168,7 +168,7 @@ def test_run_harmony_embedding_deterministic_and_pure(stubbed_scvi):
     np = pytest.importorskip("numpy")
     pd = pytest.importorskip("pandas")
     ad = pytest.importorskip("anndata")
-    import integrate_sns_scvi as isi  # noqa: E402
+    import integrate_scvi as isi  # noqa: E402
 
     rng = np.random.RandomState(0)
     n, g = 100, 40
