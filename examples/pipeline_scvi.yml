@@ -10,8 +10,6 @@ data:
   batch_key: data_origin
   categorical_covariate_keys: [tech]
   continuous_covariate_keys: []
-  sample_key: null
-  technology_key: tech
   species: mouse
   gene_symbol_case: preserve
 
