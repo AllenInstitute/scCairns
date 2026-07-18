@@ -24,6 +24,7 @@ Typical use
     # flags is a DataFrame indexed by adata.obs_names with columns:
     #   score_endothelial, n_hits_endothelial, flag_endothelial,
     #   score_hepatic,     n_hits_hepatic,     flag_hepatic,
+    #   score_mesenchymal, n_hits_mesenchymal, flag_mesenchymal,
     #   flag_any_contam
 
     # Write out the flagged cells (matches the Seurat WhichCells CSV format)
@@ -67,6 +68,18 @@ DEFAULT_CONTAM_PANELS: Dict[str, list] = {
     # gluconeogenesis + Mug1 murine plasma protein + Ugt2b1 phase-II
     # metabolism. Together these are essentially not expressed outside liver.
     "hepatic":     ["Slco1a1", "Slco1a4", "G6pc", "Mug1", "Ugt2b1"],
+    # Mesenchymal / fibroblast (endoneurial fibroblasts or Schwann-cell
+    # precursors — both neural-crest-derived, easy to co-purify with
+    # sympathetic neurons on standard dissociation). Panel choice:
+    #   Pdgfra  — canonical tissue-resident fibroblast TF-target
+    #   Col1a2  — fibrillar collagen, fibroblast-specific (Col4* shared
+    #             with endothelium so intentionally not used here)
+    #   Ddr2    — collagen-binding RTK, mesenchymal-restricted
+    #   Cfh     — complement factor H, secreted by stromal fibroblasts
+    #   Tgfbr2  — TGF-β signaling dominant in fibroblasts/stroma
+    # None of these are expressed at appreciable level in adult sympathetic
+    # neurons; coincident z-score elevation on ≥2 flags a mesenchymal cell.
+    "mesenchymal": ["Pdgfra", "Col1a2", "Ddr2", "Cfh", "Tgfbr2"],
 }
 
 
