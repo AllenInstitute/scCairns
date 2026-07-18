@@ -16,7 +16,6 @@ data:
   batch_key: data_origin          # the biological/sample batch to integrate over
   categorical_covariate_keys: [tech]   # extra nuisance covariate(s)
   continuous_covariate_keys: []
-  technology_key: tech
   species: mouse
   gene_symbol_case: preserve
 

@@ -10,12 +10,16 @@ usually means you pointed inspection at a raw-counts file instead of an
 `integrated.h5ad`. Run inspection on the integration output, or set
 `inspection.contamination.layer` to a log-normalized layer.
 
-### Filter mode can't find the scVI model / `scvi_model_*` missing
+### `[WARN] Could not read ... model` / `scvi_model_*` not found
 
-When filtering, inspection looks for the trained model directory beside the input
-h5ad and in the output directory. If you moved or renamed files, the auto-discovery
-misses it. Keep each round's `integrated.h5ad` next to its `scvi_model_*` directory,
-or pass `--model-dir` explicitly.
+Inspection auto-discovers a trained `scvi_model_*` directory (beside the input h5ad
+or in the output directory) **only to infer `batch_key`/covariate keys when you
+haven't supplied them**. It is *not* required to generate a report or to filter — both
+work from the embeddings, clusters, and `obs` already in the h5ad. So a missing model
+is at most a warning, and it's irrelevant if you pass `--config` (or `--batch-key`),
+or if you brought your own embedding (see
+[integration-methods.md](integration-methods.md#level-b--bring-your-own-embedding-no-changes-to-this-pipeline)).
+To silence it, pass `--model-dir`, or supply the keys via config/CLI.
 
 ### `Unsupported pipeline_version`
 

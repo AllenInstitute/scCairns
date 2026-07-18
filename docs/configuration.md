@@ -27,7 +27,8 @@ it**. For the raw templates see `examples/pipeline_scvi.yml` (mouse/SNS),
 | `batch_key` | `data_origin` | The `obs` column scVI integrates over. **Set this to your batch/sample variable.** |
 | `categorical_covariate_keys` | `[tech]` | Extra nuisance factors to condition on (platform, chemistry). Set `[]` if none. |
 | `continuous_covariate_keys` | `[]` | Continuous nuisance factors (e.g. percent-mito) if you want scVI to condition on them. |
-| `species`, `gene_symbol_case` | `mouse`, `preserve` | See [adapting to your data](adapting-to-your-data.md). `gene_symbol_case: upper/lower` normalizes symbols. |
+| `gene_symbol_case` | `preserve` | `upper`/`lower` normalizes `var_names` before QC and marker matching. See [adapting to your data](adapting-to-your-data.md). |
+| `species` | `mouse` | **Informational label only** — stored in the config but not read by the pipeline. QC is driven entirely by the `qc.*_gene_patterns` regex, so set *those* for your organism (setting `species` alone changes nothing). |
 
 ## `qc`
 

@@ -20,8 +20,8 @@ data:
   batch_key: sample                    # <-- EDIT: the obs column to integrate over
   categorical_covariate_keys: []       # <-- EDIT: extra nuisance covariates, or []
   continuous_covariate_keys: []
-  technology_key: null
-  species: human                       # <-- EDIT: informational; drive QC via patterns below
+  species: human                       # informational label only (NOT read by the pipeline);
+                                       # drive QC through the gene patterns below
   gene_symbol_case: preserve           # set 'upper'/'lower' if your symbols need normalizing
 
 qc:
