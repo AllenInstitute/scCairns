@@ -1,0 +1,148 @@
+## This script was used for 260708 CMG integration
+# IDs:
+# 667d248f-e362-41e8-af6c-95c07d1b19e4
+# 145cc810-73d1-4b55-b155-2d3bbc58c29c
+#!/usr/bin/env bash
+set -ex
+
+# This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
+
+# 1: ROUND 1
+# 1a. integrate the whole-ganglia object. Writes round_01/integrated.h5ad + round_manifest.json
+#python -u ./integrate_sns_scvi.py --config ./pipeline_scvi.yml \
+#  --input /data/260603_CMG_untreated_unint/cmg_untreated_260603.h5ad \
+#  --output-dir ../results/rounds/round_01/
+
+# 1b. inspect that integrated output (adds the inspection stage + auto_flags.yaml)
+#python -u ./inspect_integration.py --config ./pipeline_scvi.yml \
+#  --input ../results/rounds/round_01/integrated.h5ad \
+#  --output-dir ../results/rounds/round_01/ \
+#  --all-sweep-architectures
+
+# 2: ROUND 2
+# decisions uploaded to: /data/260618_cmg_v2_round1/round_01/inspect_large_geneXcell_cell_nb/decisions_round1_large_geneXcell_nb.yaml
+
+# 2a. inspect to filter
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /data/260618_cmg_v2_round1/round_01/integrated.h5ad \
+#  --cluster-key leiden_large_geneXcell_cell_nb \
+#  --decisions /data/260618_cmg_v2_round1/round_01/inspect_large_geneXcell_cell_nb/decisions_round1_large_geneXcell_nb.yaml \
+#  --output-dir /root/capsule/results/rounds/round_02
+
+# 2b. integration
+#python -u ./integrate_sns_scvi.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_02/filtered.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_02
+
+# 2c. inspection report
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_02/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_02_sweep \
+#  --all-sweep-architectures
+
+# ========================================= #
+
+# 3: ROUND 3
+# decisions uploaded to: /data/260618_cmg_v2_round2/round_02_sweep/inspect_harmony/decisions_round2.yaml
+
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /data/260618_cmg_v2_round2/round_02/integrated.h5ad \
+#  --cluster-key leiden_harmony \
+#  --decisions /data/260618_cmg_v2_round2/round_02_sweep/inspect_harmony/decisions_round2.yaml \
+#  --output-dir /root/capsule/results/rounds/round_03
+
+# 3b. integration
+#python -u ./integrate_sns_scvi.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_03/filtered.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_03
+
+# 3c. inspection report
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_03/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_03_sweep \
+#  --all-sweep-architectures
+
+# ========================================= #
+
+# 4: Identified contaminants in the round_3 object. Introduced new flag_contamination.py script.
+# Re-run inspect on the round 3 object
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_03_inspect_cells \
+#  --all-sweep-architectures
+
+# saved output to s3://pga-costa-lab-wg-802451596237-us-west-2/zack/cmg_integration_v2/rounds/round_03b_inspect_cells/
+
+# ========================================= #
+
+# 5: filter on the putative contaminated cells
+# in this case, I had observed clear endothelial and hepatic marker expression in about 50 cells for each
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
+#  --cluster-key leiden_harmony \
+#  --decisions /data/2607708_cmg_v2_round_03b_inspect_cells/inspect_harmony/decisions_round3b_flag_cells.yaml \
+#  --output-dir /root/capsule/results/rounds/round_04_filter_cells 
+  
+# 5b. integration
+#python -u ./integrate_sns_scvi.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_04_filter_cells/filtered.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_04
+
+# 5c. inspection report
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_04_sweep \
+#  --all-sweep-architectures
+
+# ========================================= #
+# 5: SUMMARIZE ROUNDS
+# from /data/260622_cmg_v2_round3
+
+# summarize rounds
+python -u ./summarize_rounds.py \
+  --rounds /data/260618_cmg_v2_round1/round_01 /data/260618_cmg_v2_round2/round_02 /data/260622_cmg_v2_round3/rounds/round_03  /data/260708_cmg_v2_round_04/rounds/round_04_filter_cells /data/260708_cmg_v2_round_04/rounds/round_04 \
+  --output-dir /root/capsule/results/summary --verify \
+  --terminal-run-architecture leiden_harmony
+
+
+
+
+## run the integration and inspection together:
+#python -u ./integrate_sns_scvi.py "$@" --config ./pipeline_scvi.yml
+#python -u ./inspect_integration.py --config ./pipeline_scvi.yml
+
+# upload the decisions, filter, then pass the filtered object to integrate and inspect
+
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/data/260605_cmg_round3/integrated.h5ad \
+#  --cluster-key leiden_small_gene_nb \
+#  --decisions /root/capsule/data/260605_cmg_round3/inspect_small_gene_nb/decisions_round3.yaml \
+#  --output-dir /root/capsule/results/rounds/round_04
+
+#python -u ./integrate_sns_scvi.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_04/filtered.h5ad \
+# --output-dir /root/capsule/results/rounds/round_04
+
+# supply the keys of the integration we want to inspect or all sweeps
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_04_sweep \
+#  --all-sweep-architectures
+
+# summarize rounds
+#python -u ./summarize_rounds.py \
+#  --rounds data/260603_cmg_round1/ data/260603_cmg_round2/ data/260605_cmg_round3/ data/260617_cmg_round4/round_04_sweep \
+#  --output-dir results/summary --verify
