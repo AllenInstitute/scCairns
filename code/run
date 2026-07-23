@@ -68,41 +68,42 @@ set -ex
 
 # 4: Identified contaminants in the round_3 object. Introduced new flag_contamination.py script.
 # Re-run inspect on the round 3 object
-# 7/23/26 re-run after adding mesenchymal markers
+# 7/23/26 re-run after adding mesenchymal markers yielding
+# 460b7f25-174a-407c-afdb-483f9a72e7cd 260723_cmg_v2_round_3c
 
-python -u ./inspect_integration.py \
-  --config ./pipeline_scvi.yml \
-  --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_03_v3 \
-  --all-sweep-architectures
-
-# saved output to s3://pga-costa-lab-wg-802451596237-us-west-2/zack/cmg_integration_v2/rounds/round_03b_inspect_cells/
-
-# ========================================= #
-
-# 5: filter on the putative contaminated cells
-# in this case, I had observed clear endothelial and hepatic marker expression in about 50 cells for each
-# run a second iteration of this on mdyXXX after adding mesenchymal gene markers
-# 
 #python -u ./inspect_integration.py \
 #  --config ./pipeline_scvi.yml \
 #  --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
-#  --cluster-key leiden_harmony \
-#  --decisions /data/2607708_cmg_v2_round_03b_inspect_cells/inspect_harmony/decisions_round3b_flag_cells.yaml \
-#  --output-dir /root/capsule/results/rounds/round_04_filter_cells_v2
+#  --output-dir /root/capsule/results/rounds/round_03_v3 \
+#  --all-sweep-architectures
+
+# saved output to s3://pga-costa-lab-wg-802451596237-us-west-2/zack/cmg_integration_v2/rounds/round_3c
+
+# ========================================= #
+
+# 5: filter on the putative contaminated cells from the step above
+# in this case, I had observed clear endothelial and hepatic marker expression in about 50 cells for each
+# run a second iteration of this on 7/23/26 after adding mesenchymal gene markers
+#
+python -u ./inspect_integration.py \
+  --config ./pipeline_scvi.yml \
+  --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
+  --cluster-key leiden_harmony \
+  --decisions /data/260723_cmg_v2_round_3c/rounds/round_03_v3/inspect_harmony/decisions_round3c.yaml \
+  --output-dir /root/capsule/results/rounds/round_04_filter_cells_v3
   
 # 5b. integration
-#python -u ./integrate_sns_scvi.py \
-#  --config ./pipeline_scvi.yml \
-#  --input /root/capsule/results/rounds/round_04_filter_cells_v2/filtered.h5ad \
-#  --output-dir /root/capsule/results/rounds/round_04
+python -u ./integrate_sns_scvi.py \
+  --config ./pipeline_scvi.yml \
+  --input /root/capsule/results/rounds/round_04_filter_cells_v2/filtered.h5ad \
+  --output-dir /root/capsule/results/rounds/round_04
 
 # 5c. inspection report
-#python -u ./inspect_integration.py \
-#  --config ./pipeline_scvi.yml \
-#  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
-#  --output-dir /root/capsule/results/rounds/round_04_sweep \
-#  --all-sweep-architectures
+python -u ./inspect_integration.py \
+  --config ./pipeline_scvi.yml \
+  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
+  --output-dir /root/capsule/results/rounds/round_04_sweep \
+  --all-sweep-architectures
 
 # ========================================= #
 # 5: SUMMARIZE ROUNDS
