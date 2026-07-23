@@ -7,7 +7,11 @@ Every round records its seed, code commit, and input fingerprint, so the whole
 lineage is reproducible.
 
 ```text
-integrate → inspect → edit decisions → filter → re-integrate
+per round:     integrate → inspect → edit decisions → filter → re-integrate
+                                   ↓  each round stamps a round_manifest
+across rounds:   round 1 → round 2 → round 3 → …   (seed · commit · input hash · parent pointer)
+                                   ↓
+               summarize_rounds → decisions ledger + lineage + integrity report
 ```
 
 **Who it's for:** anyone doing quality-controlled single-cell integration who wants a
