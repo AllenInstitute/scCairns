@@ -27,6 +27,12 @@ The terminal round has no child, so pin its architecture explicitly:
 
     python code/summarize_rounds.py --rounds r1 r2 r3 \\
         --terminal-run-architecture leiden_harmony
+
+A round that only *re-inspected* a prior round's output across a sweep has no
+top-level ``round_manifest.json`` — just ``inspect_<arch>/`` sidecars. Such a
+directory is still recognized as a round (labeled by its directory name), with
+clusters/flagged sourced from the acted-on architecture; point ``--rounds`` or
+``--rounds-dir`` at it exactly as for any other round.
 """
 
 from __future__ import annotations
@@ -227,6 +233,83 @@ def find_inspection_manifests(round_dir: str) -> Dict[str, Dict[str, Any]]:
                        or entry[len("inspect_"):])
             result.setdefault(variant, man)
     return result
+
+
+def synthesize_inspection_round(round_dir: str) -> Optional[Dict[str, Any]]:
+    """Build a round record for an inspection-only sweep directory.
+
+    Some rounds only *re-inspect* a prior round's integrated output across a
+    sweep of architectures — they produce no integration of their own, so the
+    directory has no top-level ``round_manifest.json``, just
+    ``inspect_<arch>/round_manifest.json`` sidecars. Treat such a directory as a
+    round in its own right: label it by the directory name and leave the
+    ``inspection`` stage absent so :func:`extract_row` sources clusters/flagged
+    from the acted-on architecture's sidecar (the normal sweep path). Run-level
+    provenance (seed, commit) is donated from a sidecar, since every stage of a
+    run records the same values.
+
+    Returns ``None`` when the directory has no inspection sidecars, so callers
+    can fall back to erroring as before.
+    """
+    insp_by_variant = find_inspection_manifests(round_dir)
+    if not insp_by_variant:
+        return None
+    donor = next(iter(insp_by_variant.values()))
+    real = os.path.realpath(round_dir)
+    manifest: Dict[str, Any] = {
+        "pipeline_version": donor.get("pipeline_version"),
+        "reproducibility": donor.get("reproducibility"),
+        "code": donor.get("code"),
+        "updated": donor.get("updated"),
+        "_synthetic_inspection_only": True,
+    }
+    # Best-effort parent link: if a sidecar recorded the object it inspected,
+    # expose it as the decision input so discovery-mode lineage can chain this
+    # round to its parent. (In --rounds mode the supplied order is authoritative,
+    # so this is only a convenience for --rounds-dir.)
+    for man in insp_by_variant.values():
+        src = _g(man, "inspection", "input_h5ad") or _g(man, "integration",
+                                                         "input_h5ad")
+        if src:
+            manifest["decisions"] = {"input_h5ad": src}
+            break
+    manifest["_path"] = os.path.join(real, "round_manifest.json")
+    manifest["_dir"] = real
+    manifest["_round_id"] = os.path.basename(real)
+    return manifest
+
+
+def discover_inspection_only_rounds(rounds_dir: str,
+                                    exclude_dirs: set) -> List[Dict[str, Any]]:
+    """Discover inspection-only sweep rounds under rounds_dir.
+
+    Looks at rounds_dir and each immediate subdirectory for a dir that has
+    ``inspect_*`` sidecars but no top-level ``round_manifest.json`` (see
+    :func:`synthesize_inspection_round`). ``exclude_dirs`` holds the realpaths of
+    directories already accounted for as ordinary rounds (and their ``_sweep``
+    siblings), so their sidecars are not mistaken for standalone rounds. Dirs
+    whose names start with ``inspect_`` or end with ``_sweep`` are skipped for
+    the same reason.
+    """
+    found: List[Dict[str, Any]] = []
+    seen = set(exclude_dirs)
+    candidates = [rounds_dir]
+    for entry in sorted(os.listdir(rounds_dir)):
+        sub = os.path.join(rounds_dir, entry)
+        if os.path.isdir(sub):
+            candidates.append(sub)
+    for cand in candidates:
+        real = os.path.realpath(cand)
+        if real in seen:
+            continue
+        base = os.path.basename(real)
+        if base.startswith("inspect_") or base.endswith("_sweep"):
+            continue
+        syn = synthesize_inspection_round(cand)
+        if syn is not None:
+            found.append(syn)
+            seen.add(real)
+    return found
 
 
 def _scib_csv_path(round_dir: str) -> Optional[str]:
@@ -1455,19 +1538,35 @@ def main():
         if not os.path.isdir(args.rounds_dir):
             parser.error(f"rounds-dir not found: {args.rounds_dir}")
         manifest_paths = find_manifests(args.rounds_dir)
-        if not manifest_paths:
-            parser.error(f"No round_manifest.json found under {args.rounds_dir}")
         manifests = [load_manifest(p) for p in manifest_paths]
+        # Also pick up inspection-only sweep rounds — dirs with inspect_*
+        # sidecars but no top-level round_manifest.json (e.g. a re-inspection
+        # sweep of a prior round). Exclude ordinary rounds and their _sweep
+        # siblings so their sidecars aren't counted as standalone rounds.
+        exclude = {m["_dir"] for m in manifests}
+        exclude |= {m["_dir"] + "_sweep" for m in manifests}
+        manifests += discover_inspection_only_rounds(args.rounds_dir, exclude)
+        if not manifests:
+            parser.error(f"No round_manifest.json found under {args.rounds_dir}")
         scan_dir = args.rounds_dir
         default_out = os.path.join(args.rounds_dir, "summary")
     else:
-        manifest_paths = []
+        manifests = []
         for item in args.rounds:
-            mp = os.path.join(item, "round_manifest.json") if os.path.isdir(item) else item
-            if not os.path.exists(mp):
-                parser.error(f"No round_manifest.json at: {item}")
-            manifest_paths.append(mp)
-        manifests = [load_manifest(p) for p in manifest_paths]
+            if os.path.isdir(item):
+                mp = os.path.join(item, "round_manifest.json")
+                if os.path.exists(mp):
+                    manifests.append(load_manifest(mp))
+                    continue
+                syn = synthesize_inspection_round(item)
+                if syn is None:
+                    parser.error(f"No round_manifest.json (or inspect_* sweep "
+                                 f"manifests) at: {item}")
+                manifests.append(syn)
+            else:
+                if not os.path.exists(item):
+                    parser.error(f"No round_manifest.json at: {item}")
+                manifests.append(load_manifest(item))
         explicit_order = [m["_dir"] for m in manifests]  # trust supplied order
         default_out = "round_summary"
 
