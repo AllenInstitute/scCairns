@@ -85,35 +85,35 @@ set -ex
 # in this case, I had observed clear endothelial and hepatic marker expression in about 50 cells for each
 # run a second iteration of this on 7/23/26 after adding mesenchymal gene markers
 #
-python -u ./inspect_integration.py \
-  --config ./pipeline_scvi.yml \
-  --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
-  --cluster-key leiden_harmony \
-  --decisions /data/260723_cmg_v2_round_3c/rounds/round_03_v3/inspect_harmony/decisions_round3c.yaml \
-  --output-dir /root/capsule/results/rounds/round_04_filter_cells_v3
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /data/260622_cmg_v2_round3/rounds/round_03/integrated.h5ad \
+#  --cluster-key leiden_harmony \
+#  --decisions /data/260723_cmg_v2_round_3c/rounds/round_03_v3/inspect_harmony/decisions_round3c.yaml \
+#  --output-dir /root/capsule/results/rounds/round_04_filter_cells_v3
   
 # 5b. integration
-python -u ./integrate_sns_scvi.py \
-  --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_04_filter_cells_v2/filtered.h5ad \
-  --output-dir /root/capsule/results/rounds/round_04
+#python -u ./integrate_sns_scvi.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_04_filter_cells_v3/filtered.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_04
 
 # 5c. inspection report
-python -u ./inspect_integration.py \
-  --config ./pipeline_scvi.yml \
-  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
-  --output-dir /root/capsule/results/rounds/round_04_sweep \
-  --all-sweep-architectures
+#python -u ./inspect_integration.py \
+#  --config ./pipeline_scvi.yml \
+#  --input /root/capsule/results/rounds/round_04/integrated.h5ad \
+#  --output-dir /root/capsule/results/rounds/round_04_sweep \
+#  --all-sweep-architectures
 
 # ========================================= #
 # 5: SUMMARIZE ROUNDS
 # from v2 CMG pipeline
 
-# summarize rounds
-#python -u ./summarize_rounds.py \
-#  --rounds /data/260618_cmg_v2_round1/round_01 /data/260618_cmg_v2_round2/round_02 /data/260622_cmg_v2_round3/rounds/round_03  /data/260722_cmg_v2_round_4/rounds/round_04_filter_cells_v2 /data/260722_cmg_v2_round_4/rounds/round_04 \
-#  --output-dir /root/capsule/results/summary --verify \
-#  --terminal-run-architecture leiden_harmony
+# summarize rounds from the round_manifest.json
+python -u ./summarize_rounds.py \
+  --rounds /data/260618_cmg_v2_round1/round_01 /data/260618_cmg_v2_round2/round_02 /data/260622_cmg_v2_round3/rounds/round_03  /data/260723_cmg_v2_round_3c/rounds/round_03_v3 /data/260723_cmg_v2_round_4/rounds/round_04_filter_cells_v3 /data/260723_cmg_v2_round_4/rounds/round_04_sweep  \
+  --output-dir /root/capsule/results/summary --verify \
+  --terminal-run-architecture leiden_harmony
 
 
 
