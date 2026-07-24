@@ -347,3 +347,50 @@ def test_explicit_rounds_accepts_inspection_only_dir(tmp_path):
     _sweep_inspection(insp_dir, "harmony", 14, 2)
     syn = sr.synthesize_inspection_round(str(insp_dir))
     assert syn is not None and syn["_round_id"] == "round_03_v3"
+
+
+def test_splice_inspection_only_round_into_lineage(tmp_path):
+    # P (round_03) has BOTH a filtering data-child (round_04_filter_cells_v3,
+    # whose fingerprint points back to round_03's own bytes) and an
+    # inspection-only child (round_03_v3). The inspection round informed that
+    # filtering, so it should be spliced onto the edge:
+    #   round_03 → round_03_v3 → round_04_filter_cells_v3 → round_04
+    p = str(tmp_path / "round_03")
+    insp = str(tmp_path / "round_03_v3")
+    filt = str(tmp_path / "round_04_filter_cells_v3")
+    integ4 = str(tmp_path / "round_04")
+    manifests = [
+        {"_dir": p, "_round_id": "round_03"},
+        {"_dir": insp, "_round_id": "round_03_v3",
+         "_synthetic_inspection_only": True},
+        {"_dir": filt, "_round_id": "round_04_filter_cells_v3"},
+        {"_dir": integ4, "_round_id": "round_04"},
+    ]
+    parent_map = {p: None, insp: p, filt: p, integ4: filt}
+    order = [p, insp, filt, integ4]
+
+    sr.splice_inspection_only_rounds(manifests, parent_map, order)
+
+    assert parent_map[insp] == p       # inspection still hangs off round_03
+    assert parent_map[filt] == insp    # filtering now descends from it
+    assert parent_map[integ4] == filt  # downstream integration unchanged
+
+
+def test_splice_respects_supplied_order(tmp_path):
+    # An inspection round listed AFTER the filtering it would attach to must not
+    # be spliced onto that earlier edge.
+    p = str(tmp_path / "round_03")
+    filt = str(tmp_path / "round_04_filter")
+    insp = str(tmp_path / "round_03_v3")
+    manifests = [
+        {"_dir": p, "_round_id": "round_03"},
+        {"_dir": filt, "_round_id": "round_04_filter"},
+        {"_dir": insp, "_round_id": "round_03_v3",
+         "_synthetic_inspection_only": True},
+    ]
+    parent_map = {p: None, filt: p, insp: p}
+    order = [p, filt, insp]  # inspection comes last
+
+    sr.splice_inspection_only_rounds(manifests, parent_map, order)
+
+    assert parent_map[filt] == p  # unchanged: inspection did not precede it

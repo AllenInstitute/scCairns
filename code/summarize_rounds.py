@@ -171,6 +171,48 @@ def order_by_lineage(manifests: List[Dict[str, Any]],
     return sorted(manifests, key=lambda m: (depth(m), m["_round_id"]))
 
 
+def splice_inspection_only_rounds(
+        manifests: List[Dict[str, Any]],
+        parent_map: Dict[str, Optional[str]],
+        order: Optional[List[str]] = None) -> Dict[str, Optional[str]]:
+    """Insert inspection-only rounds onto the lineage edge they informed.
+
+    An inspection-only round re-inspects its parent P's integrated output but
+    writes no new h5ad, so nothing's input fingerprint points to it and it lands
+    as a leaf dangling off P. Its purpose, though, is to update the
+    flags/decisions that P's downstream filtering acts on. Re-point P's
+    data-children (rounds whose resolved parent is P) through the inspection
+    round so it sits inline — ``P → inspect → filtered-child`` — instead of
+    dangling.
+
+    Only fires when P has exactly one inspection-only child (otherwise the
+    target edge is ambiguous). When an explicit ``order`` is supplied, a
+    data-child is re-parented only if the inspection round precedes it in that
+    order, so a later inspection is never spliced onto an earlier filtering.
+    """
+    pos = {d: i for i, d in enumerate(order)} if order else {}
+    insp_children: Dict[str, List[str]] = {}
+    for m in manifests:
+        if m.get("_synthetic_inspection_only"):
+            p = parent_map.get(m["_dir"])
+            if p:
+                insp_children.setdefault(p, []).append(m["_dir"])
+    for p, kids in insp_children.items():
+        if len(kids) != 1:
+            continue
+        insp_dir = kids[0]
+        for m in manifests:
+            d = m["_dir"]
+            if d == insp_dir or m.get("_synthetic_inspection_only"):
+                continue
+            if parent_map.get(d) != p:
+                continue
+            if pos and pos.get(insp_dir, 0) >= pos.get(d, 0):
+                continue
+            parent_map[d] = insp_dir
+    return parent_map
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  scIB benchmark harvesting
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -773,7 +815,9 @@ def render_mermaid(manifests: List[Dict[str, Any]],
                 edge_bits.append(f"−{_fmt(row.get('removed'))} ({_fmt(row.get('removal_pct'))}%)")
             if row.get("filtered_on"):
                 edge_bits.append(f"on {row['filtered_on']}")
-            label = "<br/>".join(edge_bits) or "next round"
+            default = ("re-inspect" if m.get("_synthetic_inspection_only")
+                       else "next round")
+            label = "<br/>".join(edge_bits) or default
             lines.append(f'    {node_id[parent_dir]} -->|"{label}"| {node_id[m["_dir"]]}')
     lines += [
         "    classDef clean fill:#eef7ee,stroke:#449944;",
@@ -1573,6 +1617,11 @@ def main():
     output_dir = args.output_dir or default_out
 
     parent_map = build_parent_map(manifests, explicit_order)
+    # Inspection-only rounds write no h5ad, so nothing's fingerprint points to
+    # them and they dangle off their parent. Splice each onto the edge whose
+    # filtering it informed before ordering/rendering.
+    parent_map = splice_inspection_only_rounds(manifests, parent_map,
+                                               explicit_order)
     # Discovery mode: topologically reorder. Explicit list: keep supplied order.
     if explicit_order is None:
         manifests = order_by_lineage(manifests, parent_map)
