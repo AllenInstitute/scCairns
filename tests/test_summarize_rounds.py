@@ -289,3 +289,61 @@ def test_html_report_includes_full_featured_sections(tmp_path):
     assert "remove_cluster: 7 (-2000)" in html
     assert "48,210 start cells to 44,933 final cells" in html
     assert "No integrity issues detected" in html
+
+
+def test_synthesize_inspection_only_round(tmp_path):
+    # A round that only re-inspected a prior round's output across a sweep: it
+    # has inspect_<arch>/round_manifest.json sidecars but NO top-level
+    # round_manifest.json. It should be recognized as a round, labeled by its
+    # directory, with clusters sourced from the acted-on architecture.
+    insp_dir = tmp_path / "round_03_v3"
+    _sweep_inspection(insp_dir, "harmony", 14, 2)
+    _sweep_inspection(insp_dir, "small_gene_nb", 20, 5)
+    assert not (insp_dir / "round_manifest.json").exists()
+
+    syn = sr.synthesize_inspection_round(str(insp_dir))
+    assert syn is not None
+    assert syn["_round_id"] == "round_03_v3"
+    assert syn["_synthetic_inspection_only"] is True
+    assert "inspection" not in syn  # so extract_row falls to the sweep sidecars
+
+    # A child round filtered on harmony makes harmony the acted-on architecture.
+    acted = sr.variant_from_cluster_key("harmony")
+    row = sr.extract_row(syn, None, acted_on_variant=acted)
+    assert row["round"] == "round_03_v3"
+    assert row["n_clusters"] == 14
+    assert row["n_auto_flagged"] == 2
+    assert row["clusters_variant"] == "harmony"
+
+    # A directory with no inspect_* sidecars is not a synthetic round.
+    (tmp_path / "output").mkdir()
+    assert sr.synthesize_inspection_round(str(tmp_path / "output")) is None
+
+
+def test_discover_inspection_only_rounds(tmp_path):
+    # Discovery must surface an inspection-only round alongside ordinary rounds,
+    # without mistaking an ordinary round's own inspect_* sidecars (or a _sweep
+    # sibling) for standalone rounds.
+    _round1(tmp_path)                                   # ordinary round_01
+    _sweep_inspection(tmp_path / "round_01", "harmony", 24, 3)   # its own sidecar
+    _sweep_inspection(tmp_path / "round_02_sweep", "harmony", 19, 0)  # _sweep sib
+    _sweep_inspection(tmp_path / "round_01b", "harmony", 10, 1)  # inspection-only
+
+    real = [sr.load_manifest(str(p)) for p in
+            sorted(tmp_path.glob("round_*/round_manifest.json"))]
+    assert [m["_round_id"] for m in real] == ["round_01"]
+    exclude = {m["_dir"] for m in real} | {m["_dir"] + "_sweep" for m in real}
+
+    syn = sr.discover_inspection_only_rounds(str(tmp_path), exclude)
+    # Only round_01b is a standalone inspection-only round; round_01's sidecar
+    # and the round_02_sweep sibling must be excluded.
+    assert [m["_round_id"] for m in syn] == ["round_01b"]
+
+
+def test_explicit_rounds_accepts_inspection_only_dir(tmp_path):
+    # --rounds should accept an inspection-only round directory (no top-level
+    # manifest) the same as any other round path, via synthesis.
+    insp_dir = tmp_path / "round_03_v3"
+    _sweep_inspection(insp_dir, "harmony", 14, 2)
+    syn = sr.synthesize_inspection_round(str(insp_dir))
+    assert syn is not None and syn["_round_id"] == "round_03_v3"
