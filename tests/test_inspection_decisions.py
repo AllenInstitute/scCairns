@@ -1,19 +1,11 @@
-import sys
-from pathlib import Path
-
 import numpy as np
 import pandas as pd
 import pytest
 
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "code"))
-
-
 anndata = pytest.importorskip("anndata")
 pytest.importorskip("scanpy")
 
-from inspect_integration import (  # noqa: E402
+from sccairns.inspect import (  # noqa: E402
     apply_decisions,
     cluster_qc_summary,
     find_sweep_architecture_keys,
