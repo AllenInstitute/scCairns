@@ -79,4 +79,4 @@ python -m pytest -q
 ```
 
 If tests fail on import, your environment is missing a pinned dependency — re-run
-`pip install -r requirements.txt` inside the activated `scvi-loops` env.
+`pip install -r requirements.txt` inside the activated `sccairns` env.

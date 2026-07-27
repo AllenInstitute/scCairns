@@ -1,6 +1,6 @@
 # Contributing
 
-Notes for developing on `scvi_integration_loops`.
+Notes for developing on `scCairns`.
 
 ## Setup
 
@@ -8,8 +8,8 @@ Use the local conda/mamba environment (see
 [docs/getting-started.md](docs/getting-started.md)):
 
 ```bash
-mamba create -n scvi-loops -c conda-forge python=3.10 pip scikit-misc -y
-mamba activate scvi-loops
+mamba create -n sccairns -c conda-forge python=3.10 pip scikit-misc -y
+mamba activate sccairns
 python -m pip install -r requirements.txt
 ```
 
