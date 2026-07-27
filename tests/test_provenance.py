@@ -8,16 +8,11 @@ Covers the three traceability fixes:
 """
 
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "code"))
-
-from pipeline_config import (  # noqa: E402
+from sccairns.config import (
     DEFAULT_CONFIG,
     collect_code_provenance,
     fingerprint_file,
@@ -167,9 +162,8 @@ def test_write_yaml_record_escapes_special_chars(tmp_path):
 
 # ── Fix: provenance footer rendered into the HTML report ────────────────────
 def test_render_provenance_section(tmp_path):
-    pytest.importorskip("scanpy")  # inspect_integration imports scanpy
-    sys.path.insert(0, str(ROOT / "code"))
-    from inspect_integration import _render_provenance_section  # noqa: E402
+    pytest.importorskip("scanpy")  # sccairns.inspect imports scanpy
+    from sccairns.inspect import _render_provenance_section
 
     assert _render_provenance_section(None) == ""
     assert _render_provenance_section({}) == ""

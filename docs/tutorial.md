@@ -10,7 +10,7 @@ inspection report, auto-flagged clusters, per-cell contamination flags, a
 `decisions.yaml`, a filtered object, and a cross-round summary.
 
 > Prerequisite: a working install (see [getting-started.md](getting-started.md)).
-> All commands below assume you're in the repo root with the `scvi-loops`
+> All commands below assume you're in the repo root with the `sccairns`
 > environment activated.
 
 ## Step 0 — Generate the example data

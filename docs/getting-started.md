@@ -19,24 +19,32 @@ loop end-to-end on a synthetic dataset you generate locally, no real data requir
 ## 2. Install
 
 ```bash
-git clone <this-repo> scvi_integration_loops
-cd scvi_integration_loops
+git clone <this-repo> scCairns
+cd scCairns
 
-mamba create -n scvi-loops -c conda-forge python=3.10 pip scikit-misc -y
-mamba activate scvi-loops
+mamba create -n sccairns -c conda-forge python=3.10 pip scikit-misc -y
+mamba activate sccairns
 python -m pip install -U pip
-python -m pip install -r requirements.txt
+python -m pip install -r requirements.txt   # pinned scientific stack
+python -m pip install -e .                  # the sccairns package + `cairns` CLI
 ```
 
-`harmonypy` is included in `requirements.txt` and is only needed if you enable the
-optional [Harmony comparison](configuration.md#harmony-optional). Everything else
-works without it.
+The editable install puts the `cairns` command on your PATH (`cairns --help`). The
+`code/*.py` scripts remain as backward-compat shims for the Code Ocean capsule.
+
+Harmony is an **optional** integration path, so `harmonypy` is not a core dependency
+of the package. It is pinned in `requirements.txt` (`harmonypy==0.0.10`), and you can
+also install it via the extra: `python -m pip install -e '.[harmony]'`. Only needed if
+you enable the optional [Harmony comparison](configuration.md#harmony-optional);
+everything else works without it. (Note: `harmonypy` 2.x is incompatible — the extra
+caps it `<1`.)
 
 ## 3. Verify the install
 
 ```bash
-python -m compileall -q code tests   # all modules import/compile
-python -m pytest -q                   # the test suite passes
+python -m compileall -q sccairns code tests   # all modules import/compile
+python -m pytest -q                            # the test suite passes
+cairns --help                                  # the CLI is on your PATH
 ```
 
 If both succeed, you're ready. If `pytest` reports import errors, your environment
@@ -86,14 +94,14 @@ CLI flags override individual fields. Copy an example and edit paths:
 ```bash
 cp examples/pipeline_scvi.yml pipeline.yml   # mouse/SNS defaults
 # or: cp examples/pipeline_generic.yml pipeline.yml   # non-SNS template
-python code/integrate_scvi.py --config pipeline.yml
-python code/inspect_integration.py --config pipeline.yml
+cairns integrate --config pipeline.yml
+cairns inspect --config pipeline.yml
 ```
 
 **No-config legacy.** Every field has a default, so you can run straight off `--input`:
 
 ```bash
-python code/integrate_scvi.py --input data/my_combined.h5ad --output-dir rounds/round_01
+cairns integrate --input data/my_combined.h5ad --output-dir rounds/round_01
 ```
 
 ## Where to go next
