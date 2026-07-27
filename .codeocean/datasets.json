@@ -42,6 +42,10 @@
 			"mount": "cmg_integration_v2"
 		},
 		{
+			"id": "c9b4b71b-00cd-4ff9-8b8a-a947cb6209db",
+			"mount": "260723_cmg_v2_round_summary"
+		},
+		{
 			"id": "d5221e1d-e52f-4508-b531-a48246b6b0c1",
 			"mount": "260723_cmg_v2_round_4"
 		},
