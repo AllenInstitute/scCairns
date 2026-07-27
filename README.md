@@ -1,17 +1,18 @@
-# Config-Driven scVI/scANVI Integration Loops
+# scCairns
 
-**Iterative single-cell integration and filtering.** Integrate a multi-batch dataset
-with [scVI/scANVI](https://scvi-tools.org/), inspect the result, decide which cells
-and clusters to drop, filter, and re-integrate — repeating until the data is clean.
-Every round records its seed, code commit, and input fingerprint, so the whole
-lineage is reproducible.
+**Reproducible single-cell integration with a documented decision trail.** Integrate a
+multi-batch dataset with [scVI/scANVI](https://scvi-tools.org/) (or Harmony/Scanorama),
+inspect the result, decide which cells and clusters to drop, filter, and re-integrate —
+repeating until the data is clean. Every round records its seed, code commit, and input
+fingerprint, so the whole lineage is reproducible. Like a trail of cairns, each round
+leaves a marker you can retrace.
 
 ```text
 per round:     integrate → inspect → edit decisions → filter → re-integrate
                                    ↓  each round stamps a round_manifest
 across rounds:   round 1 → round 2 → round 3 → …   (seed · commit · input hash · parent pointer)
                                    ↓
-               summarize_rounds → decisions ledger + lineage + integrity report
+               cairns summarize → decisions ledger + lineage + integrity report
 ```
 
 **Who it's for:** anyone doing quality-controlled single-cell integration who wants a
@@ -39,7 +40,7 @@ for mouse sympathetic-nervous-system data, but the engine is dataset-agnostic �
 flowchart TD
     cfg["pipeline.yml<br/>(versioned config)"]:::cfg
 
-    subgraph INT["integrate_scvi.py"]
+    subgraph INT["cairns integrate"]
         direction TB
         qc["QC filter<br/>(skippable after round 1)"] --> hvg["HVG selection<br/>(batch-aware)"]
         hvg --> scvi["scVI training<br/>obsm['X_scVI']"]
@@ -53,7 +54,7 @@ flowchart TD
 
     INT --> integ["integrated.h5ad<br/>+ round_manifest.json<br/>+ scib_benchmark_results.csv"]:::art
 
-    subgraph INS["inspect_integration.py"]
+    subgraph INS["cairns inspect"]
         direction TB
         rpt["cluster QC + markers<br/>+ diagnostic plots"] --> flags["auto_flags.yaml<br/>(suggested removals + reasons)"]
         flags --> html["inspection_report.html<br/>(+ Run Provenance footer)"]:::art
@@ -78,25 +79,30 @@ flowchart TD
 The filtered output of each round feeds the next round's integration. A human reviews
 the report and authors the `decisions.yaml` — that's the one non-automated gate.
 
-## Main scripts
+## Package layout
 
-| Script | Role |
+`scCairns` installs as the `sccairns` package with a single `cairns` command:
+
+| Module / command | Role |
 |---|---|
-| `code/integrate_scvi.py` | QC, HVG selection, scVI training, optional scANVI annotation, UMAP/Leiden, benchmarking → `integrated.h5ad` |
-| `code/inspect_integration.py` | Inspection report, cluster QC, auto-flags, and decisions-based filtering |
-| `code/pipeline_config.py` | Shared V1 config defaults, validation, and provenance helpers |
-| `code/summarize_rounds.py` | Cross-round summary: table, decisions ledger, Mermaid lineage, integrity report |
-| `code/flag_contamination.py` | Marker-based per-cell contamination flagging (used by inspection) |
-| `code/04_visualize.py` | Legacy plotting; superseded by inspection when annotation columns exist |
+| `sccairns.integrate` — `cairns integrate` | QC, HVG selection, scVI training, optional scANVI annotation, UMAP/Leiden, benchmarking → `integrated.h5ad` |
+| `sccairns.inspect` — `cairns inspect` | Inspection report, cluster QC, auto-flags, and decisions-based filtering |
+| `sccairns.summarize` — `cairns summarize` | Cross-round summary: table, decisions ledger, Mermaid lineage, integrity report |
+| `sccairns.contamination` — `cairns flag-contamination` | Marker-based per-cell contamination flagging (used by inspection) |
+| `sccairns.config` | Shared config defaults, validation, and provenance helpers |
+
+> The `code/*.py` scripts are thin backward-compat shims (e.g. `python code/integrate_scvi.py`)
+> so the Code Ocean capsule keeps working unchanged; new work should prefer the `cairns` CLI.
 
 ## Quick start
 
 Install (details in [getting-started.md](docs/getting-started.md)):
 
 ```bash
-mamba create -n scvi-loops -c conda-forge python=3.10 pip scikit-misc -y
-mamba activate scvi-loops
-python -m pip install -r requirements.txt
+mamba create -n sccairns -c conda-forge python=3.10 pip scikit-misc -y
+mamba activate sccairns
+python -m pip install -r requirements.txt   # pinned scientific stack
+python -m pip install -e .                  # the sccairns package + `cairns` CLI
 ```
 
 One full round, locally:
@@ -105,19 +111,19 @@ One full round, locally:
 cp examples/pipeline_scvi.yml pipeline.yml      # then edit data.input_h5ad / output_dir
 
 # 1. integrate
-python code/integrate_scvi.py --config pipeline.yml
+cairns integrate --config pipeline.yml
 
 # 2. inspect (writes inspection_report.html + auto_flags.yaml)
-python code/inspect_integration.py --config pipeline.yml
+cairns inspect --config pipeline.yml
 
 # 3. review the report, rename auto_flags.yaml -> decisions.yaml, edit it, then filter:
-python code/inspect_integration.py --config pipeline.yml \
+cairns inspect --config pipeline.yml \
   --input rounds/round_01/integrated.h5ad \
   --decisions rounds/round_01/decisions.yaml \
   --output-dir rounds/round_02
 
 # 4. re-integrate the filtered object for the next round
-python code/integrate_scvi.py --config pipeline.yml \
+cairns integrate --config pipeline.yml \
   --input rounds/round_02/filtered.h5ad --output-dir rounds/round_02
 ```
 
@@ -156,7 +162,7 @@ After several rounds, combine every `round_manifest.json` into one view. Point a
 parent directory of `round_*` subdirectories:
 
 ```bash
-python code/summarize_rounds.py --rounds-dir results/rounds --verify
+cairns summarize --rounds-dir results/rounds --verify
 ```
 
 …or pass an explicit, ordered list of round directories (useful when rounds are
@@ -164,7 +170,7 @@ archived under arbitrary names — e.g. Code Ocean overwrites `/results` each ru
 rounds are copied out to durable storage):
 
 ```bash
-python code/summarize_rounds.py \
+cairns summarize \
   --rounds data/260603_cmg_round1 data/260605_cmg_round3 \
   --output-dir results/summary --verify
 ```
@@ -190,7 +196,7 @@ Local development uses a Python 3.10 conda/mamba environment and `requirements.t
 same libraries with the CUDA extra for GPU/container parity. Run the checks with:
 
 ```bash
-python -m compileall -q code tests
+python -m compileall -q sccairns code tests
 python -m pytest -q
 ```
 

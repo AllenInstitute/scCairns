@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scCairns"
+description = "Reproducible single-cell integration with a documented decision trail."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "Allen Institute" }]
+dynamic = ["version"]
+
+# Runtime dependencies are listed unpinned so `pip install -e .` into an existing
+# environment (e.g. the `scvi-loops`/`sccairns` conda env, or the Code Ocean
+# image) is satisfied by what's already present and does not disturb it. The
+# reproducible, pinned lock lives in requirements.txt / environment/Dockerfile.
+dependencies = [
+    "anndata",
+    "h5py",
+    "igraph",
+    "leidenalg",
+    "matplotlib",
+    "numpy",
+    "pandas",
+    "pyyaml",
+    "scanpy",
+    "scib-metrics",
+    "scikit-learn",
+    "scikit-misc",
+    "scipy",
+    "scvi-tools",
+    "seaborn",
+    "torch",
+]
+
+[project.optional-dependencies]
+# Harmony is an opt-in integration path (integration.harmony.enabled). Kept out
+# of the core deps so a base install doesn't pull it. Capped <1 because the code
+# targets the harmonypy 0.0.x API (requirements.txt pins 0.0.10); harmonypy 2.x
+# changed the Z_corr shape and breaks scanpy.external.pp.harmony_integrate.
+harmony = ["harmonypy<1"]
+dev = ["pytest"]
+
+[project.scripts]
+cairns = "sccairns.cli:main"
+
+[tool.setuptools]
+packages = ["sccairns"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sccairns.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

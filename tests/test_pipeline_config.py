@@ -1,14 +1,8 @@
 import copy
-import sys
-from pathlib import Path
 
 import pytest
 
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "code"))
-
-from pipeline_config import (  # noqa: E402
+from sccairns.config import (
     ConfigError,
     DEFAULT_CONFIG,
     deep_merge,

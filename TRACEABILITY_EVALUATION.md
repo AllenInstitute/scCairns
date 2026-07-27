@@ -1,6 +1,6 @@
 # Traceability & Decision-Documentation Evaluation
 
-**Repository:** `scvi_integration_loops`
+**Repository:** `scCairns`
 **Scope of evaluation:** How well the repository achieves its stated aim of
 documenting decisions for complete traceability of the integration pipeline.
 **Reviewed:** code, config system, provenance helpers, example round outputs,

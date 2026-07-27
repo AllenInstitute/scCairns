@@ -1,13 +1,9 @@
 import json
-import sys
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "code"))
-
-import summarize_rounds as sr  # noqa: E402
+from sccairns import summarize as sr
 
 
 def _write_manifest(d: Path, manifest: dict):

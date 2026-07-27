@@ -6,22 +6,17 @@ Covers:
      under a fixed seed, and does not mutate its input AnnData.
   3. Inspection auto-resolves X_pca_harmony as a latent candidate.
 
-run_harmony lives in integrate_scvi, which imports scvi at module top.
+run_harmony lives in sccairns.integrate, which imports scvi at module top.
 scvi is heavy/CUDA and not needed by run_harmony or the validators, so we stub
 it in sys.modules before import. The test is skipped if harmonypy is absent.
 """
 
 import sys
 import types
-from pathlib import Path
 
 import pytest
 
-
-ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "code"))
-
-from pipeline_config import (  # noqa: E402
+from sccairns.config import (
     ConfigError,
     DEFAULT_CONFIG,
     load_pipeline_config,
@@ -33,7 +28,7 @@ from pipeline_config import (  # noqa: E402
 def stubbed_scvi():
     """Temporarily stub the heavy scvi import for run_harmony tests.
 
-    integrate_scvi imports scvi at module top; run_harmony itself does not
+    sccairns.integrate imports scvi at module top; run_harmony itself does not
     use it. We install a stub only for the duration of the test and remove it
     afterward so the fake module cannot leak into other test modules (e.g.
     set_global_seed, which imports scvi and would otherwise treat the stub as a
@@ -48,7 +43,7 @@ def stubbed_scvi():
         yield
     finally:
         # Drop the cached integrate module so a later real import re-runs.
-        sys.modules.pop("integrate_scvi", None)
+        sys.modules.pop("sccairns.integrate", None)
         if had:
             sys.modules["scvi"] = saved
         else:
@@ -73,7 +68,7 @@ def test_default_config_has_harmony_block():
 
 # ── HVG-source resolution (the explicit decision that lifts the sweep ban) ───
 def test_resolve_harmony_hvg_spec_default_uses_top_level(stubbed_scvi):
-    import integrate_scvi as isi  # noqa: E402
+    from sccairns import integrate as isi
 
     integration_cfg = {
         "hvg": {"n_top_genes": 3000, "batch_key": "tech",
@@ -89,7 +84,7 @@ def test_resolve_harmony_hvg_spec_default_uses_top_level(stubbed_scvi):
 def test_resolve_harmony_hvg_spec_borrows_sweep_entry(stubbed_scvi):
     import types as _types
 
-    import integrate_scvi as isi  # noqa: E402
+    from sccairns import integrate as isi
 
     integration_cfg = {
         "hvg": {"n_top_genes": 3000, "batch_key": "tech",
@@ -110,7 +105,7 @@ def test_resolve_harmony_hvg_spec_borrows_sweep_entry(stubbed_scvi):
 
 
 def test_resolve_harmony_hvg_spec_unknown_entry_raises(stubbed_scvi):
-    import integrate_scvi as isi  # noqa: E402
+    from sccairns import integrate as isi
 
     integration_cfg = {"hvg": {"n_top_genes": 3000, "batch_key": "tech",
                                "flavor": "seurat_v3", "min_batches": None}}
@@ -168,7 +163,7 @@ def test_run_harmony_embedding_deterministic_and_pure(stubbed_scvi):
     np = pytest.importorskip("numpy")
     pd = pytest.importorskip("pandas")
     ad = pytest.importorskip("anndata")
-    import integrate_scvi as isi  # noqa: E402
+    from sccairns import integrate as isi
 
     rng = np.random.RandomState(0)
     n, g = 100, 40
@@ -198,7 +193,7 @@ def test_inspection_resolves_harmony_latent():
     np = pytest.importorskip("numpy")
     pd = pytest.importorskip("pandas")
     ad = pytest.importorskip("anndata")
-    from inspect_integration import resolve_inspection_keys  # noqa: E402
+    from sccairns.inspect import resolve_inspection_keys
 
     n = 30
     adata = ad.AnnData(
