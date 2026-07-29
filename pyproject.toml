@@ -46,6 +46,11 @@ dev = ["pytest"]
 cairns = "sccairns.cli:main"
 
 [tool.setuptools]
+# The package lives under code/ (not the repo root) because Code Ocean
+# reproducible runs ship ONLY the code/ folder — a repo-root package never
+# reaches the run. package-dir maps it back to the import name `sccairns` for
+# local/PyPI installs, so `import sccairns` works everywhere.
+package-dir = { "" = "code" }
 packages = ["sccairns"]
 
 [tool.setuptools.dynamic]
