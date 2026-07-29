@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 set -ex
 
-pip install -e /root/capsule -q   # provides the `cairns` command
+# Make the `cairns` CLI available with no pip/network step. The sccairns package
+# ships inside code/ — the only folder Code Ocean materializes into a run — so we
+# run it as a module instead of installing it. (`./integrate_scvi.py` etc. shims
+# also work; they import the sibling sccairns package the same way.)
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+export PYTHONPATH="${HERE}:${PYTHONPATH:-}"
+cairns() { python -m sccairns.cli "$@"; }
 
 cairns integrate --config pipeline.yml
 

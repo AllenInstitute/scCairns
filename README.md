@@ -91,6 +91,9 @@ the report and authors the `decisions.yaml` — that's the one non-automated gat
 | `sccairns.contamination` — `cairns flag-contamination` | Marker-based per-cell contamination flagging (used by inspection) |
 | `sccairns.config` | Shared config defaults, validation, and provenance helpers |
 
+> The package lives at `code/sccairns/` (not the repo root) because Code Ocean
+> reproducible runs ship only the `code/` folder. `pyproject.toml` maps it back to the
+> import name `sccairns` for local/PyPI installs, so `import sccairns` works everywhere.
 > The `code/*.py` scripts are thin backward-compat shims (e.g. `python code/integrate_scvi.py`)
 > so the Code Ocean capsule keeps working unchanged; new work should prefer the `cairns` CLI.
 
