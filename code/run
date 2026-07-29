@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -ex
 
+pip install -e /root/capsule -q   # provides the `cairns` command
+
+cairns integrate --config pipeline.yml
+
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
 
 # 1: ROUND 1
@@ -116,15 +120,15 @@ set -ex
 #  --terminal-run-architecture leiden_harmony
 
 # choose to supply each round individually
-python -u ./summarize_rounds.py --rounds \
-  /data/260618_cmg_v2_round1/round_01 \
-  /data/260618_cmg_v2_round2/round_02 \
-  /data/260622_cmg_v2_round3/rounds/round_03 \
-  /data/260723_cmg_v2_round_3c/rounds/round_03_v3 \
-  /data/260723_cmg_v2_round_4/rounds/round_04 \
-  /data/260723_cmg_v2_round_4/rounds/round_04_filter_cells_v3 \
-  --output-dir /root/capsule/results/summary --verify \
-  --terminal-run-architecture leiden_harmony
+#python -u ./summarize_rounds.py --rounds \
+#  /data/260618_cmg_v2_round1/round_01 \
+#  /data/260618_cmg_v2_round2/round_02 \
+#  /data/260622_cmg_v2_round3/rounds/round_03 \
+#  /data/260723_cmg_v2_round_3c/rounds/round_03_v3 \
+#  /data/260723_cmg_v2_round_4/rounds/round_04 \
+#  /data/260723_cmg_v2_round_4/rounds/round_04_filter_cells_v3 \
+#  --output-dir /root/capsule/results/summary --verify \
+#  --terminal-run-architecture leiden_harmony
 
 
 ## run the integration and inspection together:
