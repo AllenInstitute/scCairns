@@ -3,13 +3,13 @@
 
 Kept so the Code Ocean capsule keeps invoking ``./flag_contamination.py`` from
 CWD=``code/`` with no change, and so ``from flag_contamination import ...`` in any
-external notebook still resolves. Puts the repo root on ``sys.path`` so the package
-imports whether or not it has been ``pip install``-ed.
+external notebook still resolves. Puts this directory (``code/``, where the ``sccairns``
+package lives) on ``sys.path`` so the package imports with or without ``pip install``.
 """
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from sccairns.contamination import *  # noqa: E402,F401,F403
 from sccairns.contamination import (  # noqa: E402,F401
