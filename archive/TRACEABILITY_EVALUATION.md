@@ -1,3 +1,8 @@
+> **📦 Archived — historical evaluation.** A point-in-time review of an earlier state of
+> the project (then named `scvi_integration_loops`). It is **not maintained** and does not
+> describe current behavior — see the [README](../README.md) and [docs/](../docs/) for that.
+> Kept for the design rationale it records. Archived 2026-07-30.
+
 # Traceability & Decision-Documentation Evaluation
 
 **Repository:** `scCairns`
