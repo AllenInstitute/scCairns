@@ -59,6 +59,9 @@ inspection:
   cluster_key: auto
   latent_key: X_scANVI
   umap_key: X_umap_scanvi
+  # Inspect every complete sweep architecture (+ Harmony), one report per
+  # architecture in output-dir/inspect_<name>/. Same as --all-sweep-architectures.
+  all_architectures: false
   markers_json: null
   marker_threshold: 0.0
   neuronal_cutoff: 0.5
