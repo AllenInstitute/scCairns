@@ -64,6 +64,9 @@ inspection:
   cluster_key: auto
   latent_key: auto
   umap_key: auto
+  # Inspect every complete sweep architecture (+ Harmony), one report per
+  # architecture in output-dir/inspect_<name>/. Same as --all-sweep-architectures.
+  all_architectures: false
   auto_flag:
     mt_threshold: 15.0
     min_genes_threshold: 200
