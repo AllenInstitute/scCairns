@@ -78,6 +78,9 @@ inspection:
   cluster_key: auto
   latent_key: auto
   umap_key: auto
+  # Inspect every complete sweep architecture (+ Harmony), one report per
+  # architecture in output-dir/inspect_<name>/. Same as --all-sweep-architectures.
+  all_architectures: false
   # The marker dotplot defaults to mouse SNS marker sets. Override with your own
   # panels via a JSON file: {"Group name": ["GENE1", "GENE2", ...], ...}
   markers_json: null                   # <-- EDIT: path to your markers JSON, or null

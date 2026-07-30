@@ -51,6 +51,13 @@ integration:
     hvg_from: null            # null = use integration.hvg; or name a sweep entry
                              # above (e.g. medium_platform_cov) to borrow its HVGs
 
+inspection:
+  # This sweep trains several scVI architectures to compare; all_architectures
+  # inspects each one (+ Harmony), writing a report per architecture to
+  # output-dir/inspect_<name>/ so you can review them side by side and pick one.
+  # Set false (or omit) to review a single variant instead.
+  all_architectures: true
+
 annotation:
   enabled: false
 
