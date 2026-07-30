@@ -345,6 +345,10 @@ def apply_inspection_cli_overrides(config, args):
     set_if_provided(config, ["inspection", "cluster_key"], args.cluster_key)
     set_if_provided(config, ["inspection", "latent_key"], args.latent_key)
     set_if_provided(config, ["inspection", "umap_key"], args.umap_key)
+    # --all-sweep-architectures (a store_true flag) forces the config toggle on;
+    # when the flag is absent, the config value (inspection.all_architectures) stands.
+    if args.all_sweep_architectures:
+        config["inspection"]["all_architectures"] = True
     set_if_provided(config, ["inspection", "markers_json"], args.markers)
     set_if_provided(config, ["inspection", "neuronal_markers"], args.neuronal_markers)
     set_if_provided(config, ["inspection", "neuronal_cutoff"], args.neuronal_cutoff)
@@ -2281,7 +2285,8 @@ Typical iterative cycle:
                         help="Generate one inspection report for every complete "
                              "sweep architecture key triplet, plus Harmony when "
                              "present. Reports are written to "
-                             "output-dir/inspect_<name>/.")
+                             "output-dir/inspect_<name>/. Forces on the "
+                             "inspection.all_architectures config field.")
 
     # ── Markers ──
     parser.add_argument("--markers", default=None,
@@ -2322,8 +2327,6 @@ Typical iterative cycle:
                         help="Generate report even when --decisions is set.")
 
     args = parser.parse_args()
-    if args.all_sweep_architectures and args.decisions:
-        parser.error("--all-sweep-architectures cannot be combined with --decisions.")
 
     try:
         config = load_pipeline_config(args.config, legacy_output_dir=".")
@@ -2343,6 +2346,12 @@ Typical iterative cycle:
     inspection_cfg = config["inspection"]
     annotation_cfg = config["annotation"]
     decisions_cfg = config["decisions"]
+
+    # all_architectures (the config field or the --all-sweep-architectures flag
+    # that forces it on) is the review pass; it can't also apply a decisions filter.
+    if inspection_cfg.get("all_architectures") and args.decisions:
+        parser.error("inspection.all_architectures (or --all-sweep-architectures) "
+                     "cannot be combined with --decisions.")
 
     # Seed RNGs so any embedding recomputation, marker PCA, and other stochastic
     # diagnostics are reproducible across inspection runs.
@@ -2433,7 +2442,7 @@ Typical iterative cycle:
         if inspection_cfg.get("umap_key") in (None, "auto") and um:
             inspection_cfg["umap_key"] = um
 
-    if args.all_sweep_architectures:
+    if inspection_cfg.get("all_architectures"):
         inspection_runs = find_sweep_architecture_keys(adata, config)
         print(f"  Found {len(inspection_runs)} complete inspection run(s).")
     else:

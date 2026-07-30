@@ -117,6 +117,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "cluster_key": "auto",
         "latent_key": "auto",
         "umap_key": "auto",
+        # When true, inspect EVERY complete sweep architecture (plus Harmony),
+        # writing one report per architecture to output-dir/inspect_<name>/.
+        # The --all-sweep-architectures CLI flag forces this on. Mutually
+        # exclusive with decisions-based filtering.
+        "all_architectures": False,
         "markers_json": None,
         "marker_sets": copy.deepcopy(SNS_MARKER_SETS),
         "neuronal_markers": [
