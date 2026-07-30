@@ -5,8 +5,10 @@ import pytest
 anndata = pytest.importorskip("anndata")
 pytest.importorskip("scanpy")
 
+from sccairns.config import DEFAULT_CONFIG  # noqa: E402
 from sccairns.inspect import (  # noqa: E402
     apply_decisions,
+    apply_inspection_cli_overrides,
     cluster_qc_summary,
     find_sweep_architecture_keys,
     variant_name_from_cluster_key,
@@ -22,6 +24,39 @@ def _adata():
     adata.obs["data_origin"] = pd.Categorical(["a", "a", "b", "b"])
     adata.obs["n_genes_by_counts"] = [600, 700, 300, 800]
     return adata
+
+
+def _inspection_args(**overrides):
+    """Namespace with every field apply_inspection_cli_overrides reads (all None,
+    i.e. 'not provided', unless overridden)."""
+    import argparse
+    fields = dict(
+        input=None, output_dir=None, batch_key=None, covariate_keys=None,
+        cluster_key=None, latent_key=None, umap_key=None,
+        all_sweep_architectures=False, markers=None, neuronal_markers=None,
+        neuronal_cutoff=None, marker_threshold=None, pca_color_gene=None,
+        mt_threshold=None, min_genes_threshold=None, min_cells=None,
+        single_batch_threshold=None,
+    )
+    fields.update(overrides)
+    return argparse.Namespace(**fields)
+
+
+def test_all_architectures_config_field_default_and_cli_override():
+    import copy
+    # The config field exists and defaults to off.
+    assert DEFAULT_CONFIG["inspection"]["all_architectures"] is False
+
+    # The --all-sweep-architectures flag forces the config toggle on.
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    apply_inspection_cli_overrides(cfg, _inspection_args(all_sweep_architectures=True))
+    assert cfg["inspection"]["all_architectures"] is True
+
+    # Without the flag, a config value set to true is left untouched (config wins).
+    cfg = copy.deepcopy(DEFAULT_CONFIG)
+    cfg["inspection"]["all_architectures"] = True
+    apply_inspection_cli_overrides(cfg, _inspection_args(all_sweep_architectures=False))
+    assert cfg["inspection"]["all_architectures"] is True
 
 
 def test_apply_decisions_filters_valid_query(tmp_path):
