@@ -9,10 +9,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export PYTHONPATH="${HERE}:${PYTHONPATH:-}"
 cairns() { python -m sccairns.cli "$@"; }
 
-# 7-29-26 multi-atlas integration
-#cairns integrate --config pipeline.yml
-# 7-30-26
-cairns inspect --config pipeline.yml
+# 8-3-26 multi-atlas integration
+cairns integrate --config pipeline.yml
+
+cairns inspect --config pipeline.yml --input ../results/rounds/round_01/integrated.h5ad
 
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
 
