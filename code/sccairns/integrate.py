@@ -1333,6 +1333,19 @@ Sweep config JSON format:
     print(f"  Shape : {adata.n_obs:,} cells x {adata.n_vars:,} genes")
     print(f"  obs   : {list(adata.obs.columns)}")
 
+    obs_filter = data_cfg.get("obs_filter")
+    if obs_filter:
+        n_before = adata.n_obs
+        try:
+            mask = adata.obs.eval(obs_filter)
+        except Exception as e:
+            raise ValueError(
+                f"data.obs_filter query failed: {obs_filter!r}\n  {e}"
+            ) from e
+        adata = adata[mask].copy()
+        print(f"  obs_filter: {obs_filter!r}")
+        print(f"  Cells after filter: {adata.n_obs:,} (removed {n_before - adata.n_obs:,})")
+
     ensure_counts_layer(adata, counts_layer=counts_layer)
 
     # ══════════════════════════════════════════════════════════════════════
@@ -1674,6 +1687,7 @@ Sweep config JSON format:
         {
             "input_h5ad": input_path,
             "input_fingerprint": fingerprint_file(input_path),
+            "obs_filter": obs_filter or None,
             "parent_round": read_parent_provenance(input_path),
             "output_h5ad": out_path,
             "n_cells": adata_full.n_obs,

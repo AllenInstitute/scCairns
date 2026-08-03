@@ -6,6 +6,7 @@ reproducibility:
 data:
   input_h5ad: /data/260730_cmg_int_ext_v1_round_1/rounds/round_01/integrated.h5ad
   output_dir: /root/capsule/results/rounds/round_01
+  # obs_filter: "condition in ['Control', 'Saline', 'Untreated']"
   counts_layer: counts
   batch_key: tech
   categorical_covariate_keys: []

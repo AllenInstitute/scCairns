@@ -16,6 +16,7 @@ reproducibility:
 data:
   input_h5ad: data/my_combined.h5ad   # <-- EDIT: raw counts in .X or layers["counts"]
   output_dir: rounds/round_01          # <-- EDIT
+  # obs_filter: "condition in ['Control', 'Saline', 'Untreated']"
   counts_layer: counts
   batch_key: sample                    # <-- EDIT: the obs column to integrate over
   categorical_covariate_keys: []       # <-- EDIT: extra nuisance covariates, or []
