@@ -6,6 +6,7 @@ reproducibility:
 data:
   input_h5ad: data/combined_sns_adata.h5ad
   output_dir: rounds/round_01
+  # obs_filter: "condition in ['Control', 'Saline', 'Untreated']"
   counts_layer: counts
   batch_key: data_origin
   categorical_covariate_keys: [tech]

@@ -54,6 +54,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "technology_key": "tech",
         "species": "mouse",
         "gene_symbol_case": "preserve",
+        # pandas query string applied to adata.obs after loading; null = no filter.
+        # Example: "condition in ['Control', 'Saline', 'Untreated']"
+        "obs_filter": None,
     },
     "qc": {
         "enabled": True,
