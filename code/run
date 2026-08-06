@@ -21,6 +21,14 @@ cairns inspect --config pipeline.yml \
 --decisions /data/260805_cmg_int_ext_v1_round_1/rounds/round_01/inspect_Xlarge_geneXcell_cell_nb/decisions.yaml \
 --output-dir /root/capsule/results/rounds/round_02
 
+cairns integrate --config pipeline.yml \
+--input /root/capsule/results/rounds/round_02/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_02
+
+cairns inspect --config pipeline.yml \
+--input /root/capsule/results/rounds/round_02/integrated.h5ad \
+--all-sweep-architectures
+
 # This is the master script for the capsule. When you click "Reproducible Run", the code in this file will execute.
 
 # 1: ROUND 1
