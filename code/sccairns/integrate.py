@@ -127,6 +127,26 @@ def _normalise_gene_names_for_matching(var_names, gene_symbol_case="preserve"):
     return var_names
 
 
+def should_apply_qc_filter(qc_cfg, is_first_round):
+    """Decide whether the QC gene/cell filter runs for this round.
+
+    The filter runs when QC is enabled and not globally skipped. Additionally,
+    ``skip_filter_after_round_1`` (default True) suppresses it on any round >1
+    (``is_first_round`` False), because re-filtering genes against a later
+    round's smaller cell subset can drop rare markers the first full-data round
+    correctly kept.
+
+    Returns (apply_filter, skipped_because_later_round).
+    """
+    globally_off = (not qc_cfg.get("enabled", True)) or qc_cfg.get("skip_filter", False)
+    skip_later = (qc_cfg.get("skip_filter_after_round_1", True)
+                  and not is_first_round)
+    apply_filter = (not globally_off) and (not skip_later)
+    # "skipped because later round" only when it would otherwise have run.
+    skipped_later = skip_later and not globally_off
+    return apply_filter, skipped_later
+
+
 def compute_qc_metrics(
     adata,
     mt_gene_patterns=None,
@@ -1305,6 +1325,14 @@ Sweep config JSON format:
     counts_layer = config["data"]["counts_layer"]
     data_cfg = config["data"]
     qc_cfg = config["qc"]
+
+    # Round context: the input of a round >1 sits beside its parent round's
+    # round_manifest.json, which read_parent_provenance detects. This is the
+    # signal used to honor qc.skip_filter_after_round_1 (skip gene/cell filtering
+    # on later rounds) without a manual per-round flag. Computed once and reused
+    # for the manifest's parent_round pointer.
+    parent_provenance = read_parent_provenance(input_path)
+    is_first_round = parent_provenance is None
     integration_cfg = config["integration"]
     embedding_cfg = config["embedding"]
     benchmark_cfg = config["benchmark"]
@@ -1333,7 +1361,13 @@ Sweep config JSON format:
     print(f"  Shape : {adata.n_obs:,} cells x {adata.n_vars:,} genes")
     print(f"  obs   : {list(adata.obs.columns)}")
 
+    # Cell counts at each attrition step, so round_manifest.json reconciles with
+    # the QC plots (which are drawn post-obs_filter, pre-QC-filter).
+    n_cells_input = adata.n_obs
+    n_genes_input = adata.n_vars
+
     obs_filter = data_cfg.get("obs_filter")
+    n_cells_after_obs_filter = None
     if obs_filter:
         n_before = adata.n_obs
         try:
@@ -1343,6 +1377,7 @@ Sweep config JSON format:
                 f"data.obs_filter query failed: {obs_filter!r}\n  {e}"
             ) from e
         adata = adata[mask].copy()
+        n_cells_after_obs_filter = adata.n_obs
         print(f"  obs_filter: {obs_filter!r}")
         print(f"  Cells after filter: {adata.n_obs:,} (removed {n_before - adata.n_obs:,})")
 
@@ -1363,12 +1398,21 @@ Sweep config JSON format:
     )
     plot_qc_violins(adata, output_dir, groupby=data_cfg["batch_key"],
                     suffix="prefilter")
+    n_cells_prefilter_plot = adata.n_obs
 
-    if qc_cfg.get("enabled", True) and not qc_cfg.get("skip_filter", False):
+    # Honor skip_filter_after_round_1: re-filtering genes against a later
+    # round's smaller cell subset can drop rare markers the first (full-data)
+    # round correctly kept.
+    qc_filter_applied, skipped_later_round = should_apply_qc_filter(
+        qc_cfg, is_first_round)
+    if qc_filter_applied:
         n_before = adata.n_obs
         sc.pp.filter_cells(adata, min_genes=qc_cfg["min_genes"])
         sc.pp.filter_genes(adata, min_cells=qc_cfg["min_cells"])
         print(f"  Filtered: {n_before:,} -> {adata.n_obs:,} cells")
+    elif skipped_later_round:
+        print("  Skipping QC filtering (round >1; skip_filter_after_round_1). "
+              "Genes/cells are not re-filtered against this round's subset.")
         # Re-save counts after filtering
         adata.layers[counts_layer] = adata.X.copy()
         plot_qc_violins(adata, output_dir, groupby=data_cfg["batch_key"],
@@ -1688,8 +1732,17 @@ Sweep config JSON format:
             "input_h5ad": input_path,
             "input_fingerprint": fingerprint_file(input_path),
             "obs_filter": obs_filter or None,
-            "parent_round": read_parent_provenance(input_path),
+            "parent_round": parent_provenance,
+            "is_first_round": is_first_round,
             "output_h5ad": out_path,
+            # Attrition chain. n_cells stays the final post-QC count so existing
+            # readers (summarize_rounds) keep working; the rest explain the gap
+            # between the qc_*_prefilter plots and that number.
+            "n_cells_input": n_cells_input,
+            "n_genes_input": n_genes_input,
+            "n_cells_after_obs_filter": n_cells_after_obs_filter,
+            "n_cells_prefilter_plot": n_cells_prefilter_plot,
+            "qc_filter_applied": qc_filter_applied,
             "n_cells": adata_full.n_obs,
             "n_genes": adata_full.n_vars,
             "model_type": integration_cfg["model_type"],

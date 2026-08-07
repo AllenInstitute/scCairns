@@ -59,6 +59,33 @@ population of shallow/nuclei cells can disappear in round 1. Lower `min_genes` i
 that's not what you want. Note `skip_filter_after_round_1: true` means QC filtering
 only applies in round 1 — later rounds are shaped by your `decisions.yaml`, not QC.
 
+### A specific gene is missing from `integrated.h5ad`
+
+A gene can be "missing" for several distinct reasons, and only one is a QC issue:
+
+- **Name/case mismatch.** If `gene %in% rownames(x)` returns `FALSE` for several
+  genes at once, first suspect the gene-name convention. `var_names` may be
+  Ensembl IDs (symbol in a `var` column like `gene_symbol`) or a different case
+  (`TAC1` vs `Tac1`). The gene is present — your check used the wrong string.
+- **QC gene filter.** `sc.pp.filter_genes(min_cells=...)` drops genes detected in
+  fewer than `qc.min_cells` cells. The default is now **1** (keep every observed
+  gene); if you raised it, rare markers can be removed. This filter also used to
+  re-run every round against a *shrinking* cell subset, so a gene kept at round 1
+  (many cells) could fall below the threshold at round 3 (few cells) — that is
+  now prevented by `skip_filter_after_round_1`.
+- **HVG selection.** scVI trains only on the top HVGs. A gene can be *present* in
+  `integrated.h5ad` but not among the HVGs, so it doesn't drive the embedding.
+  Relaxing `min_cells` does **not** help here.
+
+Diagnose which one with `code/check_gene_survival.py`, pointed at a round
+directory — it traces each gene across `filtered.h5ad` / `integrated.h5ad` /
+`hvg_genes.csv`, reports cells-detected counts, and names the responsible stage:
+
+```bash
+python code/check_gene_survival.py path/to/rounds --recursive \
+    --genes Tac1 Vip Nts Cck --out gene_survival_report.csv
+```
+
 ### Cluster IDs changed between runs
 
 Cluster IDs are deterministic **only when the seed is fixed** (`reproducibility.seed`,

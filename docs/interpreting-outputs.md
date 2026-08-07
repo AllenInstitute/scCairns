@@ -80,6 +80,33 @@ After a filter step, this accounts for exactly what left: pre/post cell counts
 fractions. Use it to confirm a decision did what you intended — e.g. that removing a
 "low-quality" cluster didn't also gut one batch you care about.
 
+## Cell counts in `round_manifest.json`
+
+The `integration` block records the whole attrition chain, because the QC plots and the
+manifest are snapshots of different moments:
+
+| Field | Moment |
+| --- | --- |
+| `n_cells_input` | Cells in `data.input_h5ad`, before anything is dropped |
+| `n_cells_after_obs_filter` | After `data.obs_filter` (`null` when no filter is set) |
+| `n_cells_prefilter_plot` | What `qc_violins_prefilter.png` and `cells_per_<batch>_prefilter.png` show |
+| `n_cells` | Final count written to `integrated.h5ad`, after QC cell filtering |
+
+So `n_cells` is smaller than the `*_prefilter` plots by however many cells
+`qc.min_genes` removed, and smaller than `n_cells_input` by that plus any `obs_filter`
+selection. `qc_filter_applied` tells you whether the QC filter ran at all
+(`qc.enabled: false` or `qc.skip_filter: true` makes the pre- and post-filter counts
+identical).
+
+`summarize_rounds` reads this chain: the round table gains an **In cells** column
+(`n_cells_input`) beside the final **Cells** count, retention percentages are measured
+against the first round's input rather than its post-QC count, and `--verify` emits an
+info-level `pre_integration_drop` finding naming what did the dropping. Rounds
+integrated before these fields existed fall back to `n_cells` and report no drop.
+A `warn`-level `input_cells_mismatch` fires when a round's integration read a different
+number of cells than its own decision stage wrote — i.e. it was pointed at something
+other than that round's `filtered.h5ad`.
+
 ## When to stop iterating
 
 There is no built-in stopping rule — it's your call, guided by:

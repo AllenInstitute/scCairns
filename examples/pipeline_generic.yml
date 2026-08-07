@@ -28,7 +28,7 @@ data:
 qc:
   enabled: true
   min_genes: 500
-  min_cells: 3
+  min_cells: 1        # keep every observed gene; raise to be stricter
   # QC gene patterns are REGEX on var_names. The defaults are mouse (lowercase).
   # For human gene symbols (UPPERCASE), use:
   mt_gene_patterns: ["^MT-"]           # <-- EDIT for your organism

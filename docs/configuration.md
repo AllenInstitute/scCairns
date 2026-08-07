@@ -36,9 +36,9 @@ it**. For the raw templates see `examples/pipeline_scvi.yml` (mouse/SNS),
 |---|---|---|
 | `enabled` | `true` | Rarely off. |
 | `min_genes` | `500` | Lower for shallow/nuclei data; raise to be stricter. Cells below this are dropped. |
-| `min_cells` | `3` | Genes in fewer cells are dropped. |
+| `min_cells` | `1` | Genes detected in fewer cells are dropped. Default `1` keeps every observed gene (only all-zero columns go), so rare markers (e.g. neuropeptides) survive; raise to be stricter. |
 | `mt/ribo/hb_gene_patterns` | mouse regex | **Match your organism** (`^MT-` etc. for human). QC metrics are computed from these. |
-| `skip_filter_after_round_1` | `true` | Keeps round-1 QC from re-dropping cells in later rounds (you're filtering by decision then, not by QC). |
+| `skip_filter_after_round_1` | `true` | Runs the QC gene/cell filter on the **first round only**. Later rounds (input sits beside a parent `round_manifest.json`) skip it, so genes are never re-filtered against the smaller cell subsets later rounds operate on — which would otherwise drop rare genes the first round kept. In later rounds you filter by decision, not by QC. |
 
 ## `integration`
 
