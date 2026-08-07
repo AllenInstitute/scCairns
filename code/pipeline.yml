@@ -4,7 +4,7 @@ reproducibility:
   seed: 0          # global RNG seed; set to null for an unseeded (non-reproducible) run
 
 data:
-  input_h5ad: /data/cmg_integration_external_260728_h5ad/combined_cmg_260728.h5ad
+  input_h5ad: /data/260603_CMG_untreated_unint/cmg_untreated_260603.h5ad
   output_dir: /root/capsule/results/rounds/round_01
   obs_filter: "condition not in ['LPS 1mg/kg', 'LPS']"
   counts_layer: counts
