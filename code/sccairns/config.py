@@ -61,10 +61,17 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "qc": {
         "enabled": True,
         "min_genes": 500,
-        "min_cells": 3,
+        # Drop genes detected in fewer than this many cells. Default 1 keeps
+        # every observed gene (only all-zero columns are removed), so rare but
+        # real markers (e.g. neuropeptides) survive; raise it to be stricter.
+        "min_cells": 1,
         "mt_gene_patterns": ["mt-"],
         "ribo_gene_patterns": ["rps", "rpl"],
         "hb_gene_pattern": "^hb[^(p)]",
+        # When true, the QC gene/cell filter runs only on the first round. In
+        # later rounds (input has a parent round_manifest.json beside it) the
+        # filter is skipped, so genes are never re-filtered against the smaller
+        # cell subsets that later rounds operate on.
         "skip_filter_after_round_1": True,
         "skip_filter": False,
     },

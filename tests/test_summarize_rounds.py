@@ -283,8 +283,85 @@ def test_html_report_includes_full_featured_sections(tmp_path):
     assert "Round details" in html
     assert "Decisions ledger" in html
     assert "remove_cluster: 7 (-2000)" in html
-    assert "48,210 start cells to 44,933 final cells" in html
+    assert "48,210 input cells to 44,933 final cells" in html
     assert "No integrity issues detected" in html
+
+
+def _with_input_counts(rounds: Path, n_input: int, obs_filter=None,
+                       after_obs_filter=None):
+    """Add the attrition-chain fields integrate.py now writes to round_01."""
+    p = rounds / "round_01" / "round_manifest.json"
+    m = json.loads(p.read_text())
+    m["integration"].update({
+        "n_cells_input": n_input,
+        "n_genes_input": 21000,
+        "obs_filter": obs_filter,
+        "n_cells_after_obs_filter": after_obs_filter,
+        "n_cells_prefilter_plot": after_obs_filter or n_input,
+        "qc_filter_applied": True,
+    })
+    p.write_text(json.dumps(m))
+
+
+def test_input_cell_count_surfaced(tmp_path):
+    # round_01 read 60,000 cells; obs_filter kept 50,000; QC left 48,210.
+    _round1(tmp_path)
+    _with_input_counts(tmp_path, 60000, obs_filter="condition == 'Control'",
+                       after_obs_filter=50000)
+    manifests, parent_map = _load_ordered(tmp_path)
+    row = sr.extract_row(manifests[0])
+
+    assert row["n_cells_input"] == 60000
+    assert row["n_cells_after_obs_filter"] == 50000
+    assert row["n_cells"] == 48210
+    assert row["pre_integration_drop"] == 60000 - 48210
+
+    # Retention is measured against the input count, not the post-QC count.
+    metrics = sr._report_metrics([row], [], True)
+    assert metrics["start_cells"] == 60000
+    assert metrics["pre_integration_drop"] == 60000 - 48210
+    assert metrics["retention_pct"] == pytest.approx(100 * 48210 / 60000)
+
+    assert "In cells" in sr.render_markdown_table([row])
+    assert "60,000" in sr.render_markdown_table([row])
+    html = sr.render_html([row], "flowchart TD", [], True, [])
+    assert "60,000 → 48,210 cells" in html
+
+
+def test_legacy_manifest_without_input_count(tmp_path):
+    # Manifests written before n_cells_input existed must not report a drop.
+    _round1(tmp_path)
+    manifests, _ = _load_ordered(tmp_path)
+    row = sr.extract_row(manifests[0])
+
+    assert row["n_cells_input"] is None
+    assert row["pre_integration_drop"] is None
+    metrics = sr._report_metrics([row], [], True)
+    assert metrics["start_cells"] == 48210          # falls back to n_cells
+    assert metrics["pre_integration_drop"] == 0
+    assert metrics["retention_pct"] == 100.0
+
+
+def test_verify_flags_pre_integration_drop_and_input_mismatch(tmp_path):
+    integ = _round1(tmp_path)
+    _round2(tmp_path, integ)
+    _with_input_counts(tmp_path, 60000, obs_filter="condition == 'Control'",
+                       after_obs_filter=50000)
+    # round_02's decisions wrote 44,933 cells, but integration read 40,000.
+    p = tmp_path / "round_02" / "round_manifest.json"
+    m2 = json.loads(p.read_text())
+    m2["integration"]["n_cells_input"] = 40000
+    p.write_text(json.dumps(m2))
+
+    manifests, parent_map = _load_ordered(tmp_path)
+    findings = sr.verify(manifests, parent_map)
+    by_check = {f["check"]: f for f in findings}
+
+    assert by_check["pre_integration_drop"]["round"] == "round_01"
+    assert by_check["pre_integration_drop"]["severity"] == "info"
+    assert "11,790 of 60,000" in by_check["pre_integration_drop"]["message"]
+    assert by_check["input_cells_mismatch"]["round"] == "round_02"
+    assert by_check["input_cells_mismatch"]["severity"] == "warn"
 
 
 def test_synthesize_inspection_only_round(tmp_path):

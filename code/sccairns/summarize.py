@@ -506,9 +506,22 @@ def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None,
     else:
         sel_vs_best = None
 
+    # Cells lost between the input h5ad and the integrated output — the
+    # obs_filter selection plus QC cell filtering. Manifests written before
+    # n_cells_input existed leave this None rather than reporting a false 0.
+    n_cells_in = _as_int(integ.get("n_cells_input"))
+    n_cells_out = _as_int(integ.get("n_cells"))
+    pre_integration_drop = (
+        n_cells_in - n_cells_out
+        if n_cells_in is not None and n_cells_out is not None else None)
+
     return {
         "round": m["_round_id"],
         "updated": m.get("updated"),
+        "n_cells_input": integ.get("n_cells_input"),
+        "n_cells_after_obs_filter": integ.get("n_cells_after_obs_filter"),
+        "obs_filter": integ.get("obs_filter"),
+        "pre_integration_drop": pre_integration_drop,
         "n_cells": integ.get("n_cells"),
         "n_genes": integ.get("n_genes"),
         "model_type": integ.get("model_type"),
@@ -638,6 +651,32 @@ def verify(manifests: List[Dict[str, Any]],
                 "Decisions stage predates filtered_on capture; variant is only "
                 "implied by cluster_key.")
 
+        # Cell attrition before integration. n_cells alone is the post-QC count,
+        # so without this the obs_filter/QC losses are invisible in the summary.
+        integ = m.get("integration") or {}
+        n_in = _as_int(integ.get("n_cells_input"))
+        n_out = _as_int(integ.get("n_cells"))
+        if n_in is not None and n_out is not None and n_in > n_out:
+            reasons = []
+            if integ.get("obs_filter"):
+                reasons.append(f"obs_filter {integ['obs_filter']!r}")
+            if integ.get("qc_filter_applied"):
+                reasons.append("QC cell filtering")
+            why = " + ".join(reasons) or "unrecorded"
+            add(rid, "info", "pre_integration_drop",
+                f"{n_in - n_out:,} of {n_in:,} input cells were dropped before "
+                f"integration ({why}); n_cells reports the {n_out:,} that "
+                "survived.")
+
+        # The integration should consume exactly what this round's decision
+        # stage produced; a mismatch means it was pointed at a different file.
+        dec_out = _as_int(dec.get("output_cells"))
+        if n_in is not None and dec_out is not None and n_in != dec_out:
+            add(rid, "warn", "input_cells_mismatch",
+                f"Integration read {n_in:,} cells but the decision stage wrote "
+                f"{dec_out:,} — the integrated input is not this round's "
+                "filtered output.")
+
         # Environment drift across rounds.
         pkgs = _g(m, "integration", "package_versions")
         if isinstance(pkgs, dict):
@@ -693,6 +732,7 @@ def verify(manifests: List[Dict[str, Any]],
 
 TABLE_COLUMNS = [
     ("round", "Round"),
+    ("n_cells_input", "In cells"),
     ("n_cells", "Cells"),
     ("n_genes", "Genes"),
     ("model_type", "Model"),
@@ -796,9 +836,13 @@ def render_mermaid(manifests: List[Dict[str, Any]],
         cls = "clean"
         if _g(m, "code", "dirty") is True or row.get("filter_source") == "auto":
             cls = "drift"
+        n_in = _as_int(row.get("n_cells_input"))
+        cells_bit = (f"{_fmt(n_in)} → {_fmt(row.get('n_cells'))} cells"
+                     if n_in is not None and n_in != _as_int(row.get("n_cells"))
+                     else f"{_fmt(row.get('n_cells'))} cells")
         label_bits = [
             f"<b>{row['round']}</b>",
-            f"{_fmt(row.get('n_cells'))} cells · {_fmt(row.get('n_clusters'))} clusters",
+            f"{cells_bit} · {_fmt(row.get('n_clusters'))} clusters",
             f"seed {_fmt(row.get('seed'))} · {_fmt(row.get('commit'))}",
         ]
         if row.get("scib_best") is not None:
@@ -883,13 +927,26 @@ def _stat_card(label: str, value: str, detail: str = "",
     )
 
 
+def _row_start_cells(row: Dict[str, Any]) -> Optional[int]:
+    """Cells a round began with: its input h5ad, or its output if unrecorded.
+
+    Rounds integrated before ``n_cells_input`` was written to the manifest only
+    know their post-QC count, so fall back to that rather than dropping the
+    round out of the retention baseline entirely.
+    """
+    n_in = _as_int(row.get("n_cells_input"))
+    return n_in if n_in is not None else _as_int(row.get("n_cells"))
+
+
 def _report_metrics(rows: List[Dict[str, Any]], findings: List[Dict[str, Any]],
                     verified: bool) -> Dict[str, Any]:
-    start_cells = next((_as_int(r.get("n_cells")) for r in rows
-                        if _as_int(r.get("n_cells")) is not None), None)
+    start_cells = next((c for c in (_row_start_cells(r) for r in rows)
+                        if c is not None), None)
     final_cells = next((_as_int(r.get("n_cells")) for r in reversed(rows)
                         if _as_int(r.get("n_cells")) is not None), None)
     removed = sum(_as_int(r.get("removed")) or 0 for r in rows)
+    pre_integration_drop = sum(_as_int(r.get("pre_integration_drop")) or 0
+                               for r in rows)
     flagged = sum(_as_int(r.get("n_auto_flagged")) or 0 for r in rows)
     max_clusters = max((_as_int(r.get("n_clusters")) or 0 for r in rows),
                        default=0)
@@ -921,6 +978,7 @@ def _report_metrics(rows: List[Dict[str, Any]], findings: List[Dict[str, Any]],
         "start_cells": start_cells,
         "final_cells": final_cells,
         "removed": removed,
+        "pre_integration_drop": pre_integration_drop,
         "flagged": flagged,
         "max_clusters": max_clusters,
         "variant_counts": variant_counts,
@@ -947,11 +1005,14 @@ def _render_overview_cards(rows: List[Dict[str, Any]],
         variant_detail = (
             "consistent across rounds" if len(variants) == 1
             else f"range {_fmt(variants[0])}-{_fmt(variants[-1])}")
+    removed_detail = f"{_fmt(metrics['removed'])} removed by decisions"
+    if metrics["pre_integration_drop"]:
+        removed_detail += (f" · {_fmt(metrics['pre_integration_drop'])} dropped "
+                           "pre-integration (obs_filter + QC)")
     cards = [
         _stat_card("Rounds", _fmt(len(rows)),
-                   f"{start} start cells to {final} final cells", "neutral"),
-        _stat_card("Cells retained", retention,
-                   f"{_fmt(metrics['removed'])} total removed", "good"),
+                   f"{start} input cells to {final} final cells", "neutral"),
+        _stat_card("Cells retained", retention, removed_detail, "good"),
         _stat_card("Clusters / flagged",
                    f"{_fmt(metrics['max_clusters'])} / {_fmt(metrics['flagged'])}",
                    "maximum clusters and total auto-flagged clusters", "warn"),
@@ -998,31 +1059,43 @@ def _render_rounds_table(rows: List[Dict[str, Any]]) -> str:
 
 
 def _render_retention(rows: List[Dict[str, Any]]) -> str:
-    cell_counts = [_as_int(r.get("n_cells")) for r in rows]
-    cell_counts = [v for v in cell_counts if v is not None]
+    cell_counts = [v for v in (_as_int(r.get("n_cells")) for r in rows)
+                   if v is not None]
     if not cell_counts:
         return "<p class='empty-state'>No cell counts recorded.</p>"
-    start = cell_counts[0] or 0
-    max_cells = max(cell_counts) or 1
+    # Baseline is the first round's *input* count where the manifest records it,
+    # so the retention percentages account for cells the obs_filter and QC filter
+    # dropped before integration — not just what the decision stages removed.
+    start = next((c for c in (_row_start_cells(r) for r in rows)
+                  if c is not None), 0) or 0
+    max_cells = max(cell_counts + [start]) or 1
     items = []
     for r in rows:
         cells = _as_int(r.get("n_cells"))
+        n_in = _as_int(r.get("n_cells_input"))
         removed = _as_int(r.get("removed"))
+        dropped = _as_int(r.get("pre_integration_drop"))
         retained = (100 * cells / start) if start and cells is not None else None
         width = 0 if cells is None or cells <= 0 else max(
             1.0, min(100.0, 100 * cells / max_cells))
+        count_text = (f"{_fmt(cells)} of {_fmt(n_in)} cells"
+                      if n_in is not None and n_in != cells
+                      else f"{_fmt(cells)} cells")
+        meta = [f"{_fmt_pct(retained)} retained"]
+        if dropped:
+            meta.append(f"{_fmt(dropped)} pre-integration")
+        meta += [f"{_fmt(removed)} removed",
+                 f"{_fmt_pct(r.get('removal_pct'))} round removal"]
         filter_text = _html_filter_text(r.get("round"), r.get("filtered_on"),
                                         r.get("filter_source"))
         items.append(
             f"<div class='timeline-row' data-filter='{filter_text}'>"
             f"<div class='timeline-label'><strong>{escape(_fmt(r.get('round')))}</strong>"
-            f"<span>{escape(_fmt(cells))} cells</span></div>"
+            f"<span>{escape(count_text)}</span></div>"
             f"<div class='bar-cell'><div class='bar-track'>"
             f"<span style='width:{width:.2f}%'></span></div>"
             f"<div class='timeline-meta'>"
-            f"{escape(_fmt_pct(retained))} retained"
-            f" · {escape(_fmt(removed))} removed"
-            f" · {escape(_fmt_pct(r.get('removal_pct')))} round removal"
+            f"{escape(' · '.join(meta))}"
             f"</div></div></div>"
         )
     return "<div class='timeline'>" + "".join(items) + "</div>"
@@ -1036,7 +1109,13 @@ def _render_round_cards(rows: List[Dict[str, Any]]) -> str:
                                         r.get("filter_cluster_key"),
                                         r.get("variants"),
                                         r.get("clusters_variant"))
-        badges = [_badge(f"{_fmt(r.get('n_cells'))} cells", "good")]
+        n_in = _as_int(r.get("n_cells_input"))
+        cells_badge = (f"{_fmt(n_in)} → {_fmt(r.get('n_cells'))} cells"
+                       if n_in is not None and n_in != _as_int(r.get("n_cells"))
+                       else f"{_fmt(r.get('n_cells'))} cells")
+        badges = [_badge(cells_badge, "good")]
+        if r.get("obs_filter"):
+            badges.append(_badge("obs_filter", "warn"))
         if r.get("filtered_on"):
             badges.append(_badge(f"filtered on {r.get('filtered_on')}", "neutral"))
         if r.get("filter_source") == "auto":
@@ -1045,6 +1124,10 @@ def _render_round_cards(rows: List[Dict[str, Any]]) -> str:
             badges.append(_badge("dirty tree", "warn"))
         fields = [
             ("Updated", _fmt_date(r.get("updated"))),
+            ("Integration input cells", _fmt(r.get("n_cells_input"))),
+            ("Dropped pre-integration",
+             f"{_fmt(r.get('pre_integration_drop'))} (obs_filter + QC)"),
+            ("obs_filter", _fmt(r.get("obs_filter"))),
             ("Genes", _fmt(r.get("n_genes"))),
             ("Model", _fmt(r.get("model_type"))),
             ("Annotation", _fmt(r.get("annotation"))),
@@ -1053,8 +1136,8 @@ def _render_round_cards(rows: List[Dict[str, Any]]) -> str:
             ("Clusters", _fmt(r.get("n_clusters"))),
             ("Flagged", _fmt(r.get("n_auto_flagged"))),
             ("Cluster source", _fmt(r.get("clusters_variant"))),
-            ("Input cells", _fmt(r.get("input_cells"))),
-            ("Output cells", _fmt(r.get("output_cells"))),
+            ("Decision input cells", _fmt(r.get("input_cells"))),
+            ("Decision output cells", _fmt(r.get("output_cells"))),
             ("Removed", f"{_fmt(r.get('removed'))} ({_fmt_pct(r.get('removal_pct'))})"),
             ("Filter key", _fmt(r.get("filter_cluster_key"))),
             ("scIB best", f"{_fmt(r.get('scib_best'))}{_scib_metric_tag(r.get('scib_metric'))}"

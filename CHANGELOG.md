@@ -6,7 +6,38 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- `round_manifest.json` now records `is_first_round` (derived from the parent-round
+  pointer) so it is explicit whether QC filtering ran for the round.
+- `round_manifest.json` records the full cell-attrition chain for a round —
+  `n_cells_input`, `n_genes_input`, `n_cells_after_obs_filter`,
+  `n_cells_prefilter_plot`, and `qc_filter_applied` — alongside the existing
+  post-QC `n_cells`. Previously only the final count was written, so the QC plots
+  (drawn pre-QC-filter) and the manifest disagreed with nothing to reconcile them.
+- `cairns summarize` surfaces the input count: an **In cells** column in the round
+  table and `rounds_table.csv`, input → final counts on the lineage nodes and round
+  cards, and a `pre_integration_drop` finding under `--verify`. A new
+  `input_cells_mismatch` warning fires when a round's integration read a different
+  cell count than its own decision stage wrote.
+
+### Changed
+- Default `qc.min_cells` lowered from `3` to `1`. The gene filter now keeps every gene
+  observed in at least one cell (only all-zero columns are dropped), so rare but real
+  markers — e.g. low-abundance neuropeptides such as `Tac1`/`Cck` — are no longer
+  removed. Updated in `DEFAULT_CONFIG` and all shipped example/`code` configs. Raise it
+  to be stricter; `0` is discouraged (it keeps all-zero columns).
+- Retention percentages in the summary report are measured against the first round's
+  *input* cell count, so `obs_filter` and QC losses are included. Rounds whose
+  manifests predate `n_cells_input` fall back to the old post-QC baseline.
+
+### Fixed
+- `qc.skip_filter_after_round_1` is now honored — it was previously declared in the
+  config but read by no code, so the QC gene/cell filter re-ran on every round. Because
+  each round operates on a progressively smaller cell subset, a gene kept in round 1
+  (detected in many cells) could fall below `min_cells` and be dropped in a later round.
+  The filter now runs on the first round only (detected via the input's parent-round
+  pointer); later rounds skip it, so genes are never re-filtered against a subset. This
+  was the root cause of neuropeptide genes disappearing between rounds.
 
 ## [0.1.0] — unreleased
 
