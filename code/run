@@ -9,7 +9,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 export PYTHONPATH="${HERE}:${PYTHONPATH:-}"
 cairns() { python -m sccairns.cli "$@"; }
 
-# 8-3-26 multi-atlas integration
+# 8-7-26 Allen only integration
 cairns integrate --config pipeline.yml
 
 cairns inspect --config pipeline.yml --input ../results/rounds/round_01/integrated.h5ad
