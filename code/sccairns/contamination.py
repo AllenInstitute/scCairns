@@ -81,7 +81,7 @@ DEFAULT_CONTAM_PANELS: Dict[str, list] = {
     # neurons; coincident z-score elevation on ≥2 flags a mesenchymal cell.
     "mesenchymal": ["Pdgfra", "Col1a2", "Ddr2", "Cfh", "Tgfbr2"],
     "glial": ["Sox10","Fabp7","S100b"],
-    "immune": ["Ptprc","Cd68"],
+    "immune": ["Ptprc","Cd68"]
 }
 
 
