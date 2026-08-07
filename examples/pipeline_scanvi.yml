@@ -16,7 +16,7 @@ data:
 qc:
   enabled: true
   min_genes: 500
-  min_cells: 3
+  min_cells: 1        # keep every observed gene; raise to be stricter
   mt_gene_patterns: ["mt-"]
   ribo_gene_patterns: ["rps", "rpl"]
   hb_gene_pattern: "^hb[^(p)]"

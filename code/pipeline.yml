@@ -4,9 +4,9 @@ reproducibility:
   seed: 0          # global RNG seed; set to null for an unseeded (non-reproducible) run
 
 data:
-  input_h5ad: /data/260805_cmg_int_ext_v1_round_1/rounds/round_01/integrated.h5ad
-  output_dir: /root/capsule/results/rounds/round_02
-  obs_filter: null
+  input_h5ad: /data/260603_CMG_untreated_unint/cmg_untreated_260603.h5ad
+  output_dir: /root/capsule/results/rounds/round_01
+  obs_filter: "condition not in ['LPS 1mg/kg', 'LPS']"
   counts_layer: counts
   batch_key: tech
   categorical_covariate_keys: []
@@ -19,7 +19,7 @@ data:
 qc:
   enabled: true
   min_genes: 500
-  min_cells: 3
+  min_cells: 1        # keep every observed gene; raise to be stricter
   mt_gene_patterns: ["mt-"]
   ribo_gene_patterns: ["rps", "rpl"]
   hb_gene_pattern: "^hb[^(p)]"
@@ -132,7 +132,7 @@ inspection:
   umap_key: auto
   # Inspect every complete sweep architecture (+ Harmony), one report per
   # architecture in output-dir/inspect_<name>/. Same as --all-sweep-architectures.
-  all_architectures: false
+  all_architectures: true
   markers_json: null
   marker_threshold: 0.0
   neuronal_cutoff: 0.5

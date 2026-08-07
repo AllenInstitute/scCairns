@@ -181,7 +181,7 @@ cairns summarize \
 | Output | Contents |
 |---|---|
 | `pipeline_summary.md` / `.html` | Round table + Mermaid lineage + integrity findings |
-| `rounds_table.csv` | One row per round (cells, clusters, seed, commit, filtered-on variant, scIB scores) |
+| `rounds_table.csv` | One row per round (input + final cells, clusters, seed, commit, filtered-on variant, scIB scores) |
 | `decisions_ledger.csv` | Every keep/remove action across all rounds |
 | `lineage.mmd` | Raw Mermaid lineage diagram |
 | `pipeline_summary.json` | Full merged record + verification verdicts |
