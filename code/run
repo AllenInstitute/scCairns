@@ -11,12 +11,25 @@ cairns() { python -m sccairns.cli "$@"; }
 
 
 # 8-7-26 Allen CMG only integration. min_cells to 1
-cairns integrate --config pipeline.yml
+#cairns integrate --config pipeline.yml
+
+#cairns inspect --config pipeline.yml \
+#--input ../results/rounds/round_01/integrated.h5ad \
+#--all-sweep-architectures
+
+# 8-7-26 Filter for neurons
+cairns inspect --config pipeline.yml \
+--input /data/cmg_integration_v3/round_01/integrated.h5ad \
+--decisions /data/cmg_integration_v3/round_01/inspect_Xlarge_geneXcell_cell_nb/decisions.yaml \
+--output-dir /root/capsule/results/rounds/round_02
+
+cairns integrate --config pipeline.yml \
+--input /root/capsule/results/rounds/round_02/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_02 
 
 cairns inspect --config pipeline.yml \
---input ../results/rounds/round_01/integrated.h5ad \
+--input /root/capsule/results/rounds/round_02/integrated.h5ad \
 --all-sweep-architectures
-
 
 # 8-3-26 multi-atlas integration
 #cairns integrate --config pipeline.yml
