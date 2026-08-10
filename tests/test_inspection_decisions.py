@@ -2,7 +2,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-anndata = pytest.importorskip("anndata")
 pytest.importorskip("scanpy")
 
 from sccairns.config import DEFAULT_CONFIG  # noqa: E402
@@ -14,16 +13,6 @@ from sccairns.inspect import (  # noqa: E402
     variant_name_from_cluster_key,
     write_auto_flags_yaml,
 )
-
-
-def _adata():
-    adata = anndata.AnnData(np.ones((4, 3)))
-    adata.obs_names = [f"cell{i}" for i in range(4)]
-    adata.var_names = [f"gene{i}" for i in range(3)]
-    adata.obs["leiden"] = pd.Categorical(["0", "0", "1", "1"])
-    adata.obs["data_origin"] = pd.Categorical(["a", "a", "b", "b"])
-    adata.obs["n_genes_by_counts"] = [600, 700, 300, 800]
-    return adata
 
 
 def _inspection_args(**overrides):
@@ -59,9 +48,9 @@ def test_all_architectures_config_field_default_and_cli_override():
     assert cfg["inspection"]["all_architectures"] is True
 
 
-def test_apply_decisions_filters_valid_query(tmp_path):
+def test_apply_decisions_filters_valid_query(tmp_path, tiny_adata):
     filtered = apply_decisions(
-        _adata(),
+        tiny_adata,
         {"keep_cells": [{"query": "n_genes_by_counts > 500"}]},
         batch_key="data_origin",
         output_dir=str(tmp_path),
@@ -117,10 +106,10 @@ def test_auto_flags_records_integration_variant(tmp_path):
     assert parsed["remove_clusters"][0]["cluster"] == "7"
 
 
-def test_apply_decisions_records_filtered_on(tmp_path):
+def test_apply_decisions_records_filtered_on(tmp_path, tiny_adata):
     import json
 
-    adata = _adata()
+    adata = tiny_adata
     adata.obs["leiden_small_gene_nb"] = pd.Categorical(["0", "0", "7", "7"])
     filtered_on = {
         "variant": "small_gene_nb",
@@ -142,17 +131,17 @@ def test_apply_decisions_records_filtered_on(tmp_path):
     assert manifest["decisions"]["cluster_key"] == "leiden_small_gene_nb"
 
 
-def test_apply_decisions_raises_on_invalid_query(tmp_path):
+def test_apply_decisions_raises_on_invalid_query(tmp_path, tiny_adata):
     with pytest.raises(ValueError, match="Keep query failed"):
         apply_decisions(
-            _adata(),
+            tiny_adata,
             {"keep_cells": [{"query": "missing_column > 0"}]},
             output_dir=str(tmp_path),
         )
 
 
-def test_cluster_qc_summary_reports_latent_and_umap_silhouette():
-    adata = _adata()
+def test_cluster_qc_summary_reports_latent_and_umap_silhouette(tiny_adata):
+    adata = tiny_adata
     adata.obsm["X_scVI"] = np.array(
         [[0.0, 0.0], [0.0, 0.2], [3.0, 3.0], [3.0, 3.2]]
     )
@@ -175,8 +164,8 @@ def test_cluster_qc_summary_reports_latent_and_umap_silhouette():
     assert np.isfinite(summary["silhouette_umap"]).all()
 
 
-def test_find_sweep_architecture_keys_uses_config_order():
-    adata = _adata()
+def test_find_sweep_architecture_keys_uses_config_order(tiny_adata):
+    adata = tiny_adata
     for name in ["small", "medium"]:
         adata.obs[f"leiden_{name}"] = pd.Categorical(["0", "0", "1", "1"])
         adata.obsm[f"X_scVI_{name}"] = np.ones((4, 2))
@@ -198,8 +187,8 @@ def test_find_sweep_architecture_keys_uses_config_order():
     assert runs[1]["latent_key"] == "X_scVI_small"
 
 
-def test_find_sweep_architecture_keys_includes_harmony():
-    adata = _adata()
+def test_find_sweep_architecture_keys_includes_harmony(tiny_adata):
+    adata = tiny_adata
     for name in ["small", "medium"]:
         adata.obs[f"leiden_{name}"] = pd.Categorical(["0", "0", "1", "1"])
         adata.obsm[f"X_scVI_{name}"] = np.ones((4, 2))
@@ -225,8 +214,8 @@ def test_find_sweep_architecture_keys_includes_harmony():
     assert runs[-1]["umap_key"] == "X_umap_harmony"
 
 
-def test_find_sweep_architecture_keys_allows_harmony_only():
-    adata = _adata()
+def test_find_sweep_architecture_keys_allows_harmony_only(tiny_adata):
+    adata = tiny_adata
     adata.obs["leiden_harmony"] = pd.Categorical(["0", "0", "1", "1"])
     adata.obsm["X_pca_harmony"] = np.ones((4, 3))
     adata.obsm["X_umap_harmony"] = np.ones((4, 2))
