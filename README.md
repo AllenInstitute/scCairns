@@ -1,5 +1,7 @@
 # scCairns
 
+<img src="https://raw.githubusercontent.com/AllenInstitute/scCairns/main/docs/assets/logo.png" alt="scCairns" width="420">
+
 **Reproducible single-cell integration with a documented decision trail.** Integrate a
 multi-batch dataset with [scVI/scANVI](https://scvi-tools.org/) (or Harmony/Scanorama),
 inspect the result, decide which cells and clusters to drop, filter, and re-integrate —
