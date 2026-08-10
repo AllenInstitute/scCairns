@@ -88,6 +88,7 @@ the report and authors the `decisions.yaml` — that's the one non-automated gat
 | `sccairns.integrate` — `cairns integrate` | QC, HVG selection, scVI training, optional scANVI annotation, UMAP/Leiden, benchmarking → `integrated.h5ad` |
 | `sccairns.inspect` — `cairns inspect` | Inspection report, cluster QC, auto-flags, and decisions-based filtering |
 | `sccairns.summarize` — `cairns summarize` | Cross-round summary: table, decisions ledger, Mermaid lineage, integrity report |
+| `sccairns.record_filter` — `cairns record-filter` | Record provenance for an externally/interactively filtered `.h5ad` pair |
 | `sccairns.contamination` — `cairns flag-contamination` | Marker-based per-cell contamination flagging (used by inspection) |
 | `sccairns.config` | Shared config defaults, validation, and provenance helpers |
 
@@ -158,6 +159,19 @@ an explicit lineage. `command_args.json` keeps an append-only history of every s
 invocation. Full field-by-field detail lives in the
 [configuration reference](docs/configuration.md) and
 [interpreting outputs](docs/interpreting-outputs.md).
+
+If filtering happened in an external interactive tool, record the same provenance
+without re-running Cairns filtering:
+
+```bash
+cairns record-filter \
+  --input-h5ad rounds/round_01/integrated.h5ad \
+  --output-h5ad rounds/round_02/filtered.h5ad \
+  --output-dir rounds/round_02 \
+  --embedding-key X_scVI_Xlarge_geneXcell_cell_nb \
+  --filter-used "Removed non-neuronal clusters from interactive review" \
+  --notes "Manual lasso/cluster filtering in interactive mode"
+```
 
 ## Summarizing a completed set of rounds
 

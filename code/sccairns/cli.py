@@ -15,6 +15,7 @@ COMMANDS = {
     "integrate": "sccairns.integrate",
     "inspect": "sccairns.inspect",
     "summarize": "sccairns.summarize",
+    "record-filter": "sccairns.record_filter",
     "flag-contamination": "sccairns.contamination",
 }
 
@@ -24,6 +25,7 @@ _USAGE = (
     "  integrate           QC, HVG, scVI/scANVI training, UMAP/Leiden, benchmarking\n"
     "  inspect             inspection report, cluster QC, auto-flags, decision filtering\n"
     "  summarize           cross-round summary: table, ledger, lineage, integrity\n"
+    "  record-filter       record provenance for an externally filtered h5ad pair\n"
     "  flag-contamination  marker-based per-cell contamination flagging\n\n"
     "Run 'cairns <command> --help' for command-specific options.\n"
 )

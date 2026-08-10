@@ -152,3 +152,4 @@ dmypy.json
 !.vscode/extensions.json
 !.vscode/*.code-snippets
 .vscode
+code/check_gene_survival.py

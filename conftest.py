@@ -9,3 +9,19 @@ import os
 import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "code"))
+
+import numpy as np
+import pandas as pd
+import pytest
+
+
+@pytest.fixture
+def tiny_adata():
+    anndata = pytest.importorskip("anndata")
+    adata = anndata.AnnData(np.ones((4, 3)))
+    adata.obs_names = [f"cell{i}" for i in range(4)]
+    adata.var_names = [f"gene{i}" for i in range(3)]
+    adata.obs["leiden"] = pd.Categorical(["0", "0", "1", "1"])
+    adata.obs["data_origin"] = pd.Categorical(["a", "a", "b", "b"])
+    adata.obs["n_genes_by_counts"] = [600, 700, 300, 800]
+    return adata
