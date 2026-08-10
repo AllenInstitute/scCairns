@@ -7,8 +7,22 @@ All notable changes to **scCairns** are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- `cairns record-filter` (`sccairns.record_filter`): records provenance for a filtering
+  step performed **outside** scCairns — e.g. an interactive lasso or cluster selection in
+  a notebook. It applies no filtering of its own; it diffs an input/output `.h5ad` pair by
+  `obs_names` and writes the same `decisions` block `cairns summarize` already consumes,
+  so an interactive round appears in the round table, decisions ledger, and lineage
+  instead of breaking the chain. Writes `round_manifest.json` (input **and** output
+  fingerprints, parent-round pointer, per-cluster `actions_summary`, removal count and
+  percentage, `filtered_on.source: "interactive"`) plus `cells_to_keep.csv`,
+  `cells_removed.csv`, and `decisions_applied.yaml`. Cluster and UMAP keys are inferred
+  from `--embedding-key` when not passed; missing keys warn rather than fail, but an
+  output containing cell IDs absent from the input is an error.
 - `round_manifest.json` now records `is_first_round` (derived from the parent-round
   pointer) so it is explicit whether QC filtering ran for the round.
+- `data.obs_filter`: an optional pandas query string applied to `adata.obs` right after
+  load (e.g. `"condition in ['Control', 'Saline']"`), for integrating a subset without
+  writing a pre-filtered `.h5ad`. Recorded in `round_manifest.json`; `null` disables it.
 - `round_manifest.json` records the full cell-attrition chain for a round —
   `n_cells_input`, `n_genes_input`, `n_cells_after_obs_filter`,
   `n_cells_prefilter_plot`, and `qc_filter_applied` — alongside the existing
@@ -38,6 +52,10 @@ All notable changes to **scCairns** are documented here. The format is based on
   The filter now runs on the first round only (detected via the input's parent-round
   pointer); later rounds skip it, so genes are never re-filtered against a subset. This
   was the root cause of neuropeptide genes disappearing between rounds.
+
+### Documentation
+- README: `record-filter` added to the module/command table, with a runnable example in
+  the provenance section for the interactive-filtering case.
 
 ## [0.1.0] — unreleased
 
