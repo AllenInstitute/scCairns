@@ -18,8 +18,52 @@ loop end-to-end on a synthetic dataset you generate locally, no real data requir
 
 ## 2. Install
 
+Pick the mode that matches what you're doing. **Using** scCairns to analyze a dataset
+does not require a clone — install a pinned release as a dependency and keep your
+project's config and data in your own repo. Clone only if you intend to change
+scCairns itself.
+
+### A. As a pinned dependency (analysis projects)
+
 ```bash
-git clone <this-repo> scCairns
+mamba create -n myproject -c conda-forge python=3.10 pip scikit-misc -y
+mamba activate myproject
+python -m pip install -U pip
+python -m pip install "git+https://github.com/AllenInstitute/scCairns.git@v0.1.0"
+```
+
+**Always pin an exact tag.** Installing from `@main` means a later rebuild of the same
+environment silently gives you different code, and rounds produced by the old and new
+builds are no longer comparable. The tag you pin is what every `round_manifest.json`
+records as `code.version`, so it is the thing that makes a round reproducible.
+
+The repository is private (Allen-internal), so pip needs GitHub credentials. Use a
+credential helper or a PAT for the HTTPS form above, or SSH if that's how you
+authenticate:
+
+```bash
+python -m pip install "git+ssh://git@github.com/AllenInstitute/scCairns.git@v0.1.0"
+```
+
+One caveat: the package's own dependencies are deliberately **unpinned** in
+`pyproject.toml`, so that installing into an existing environment doesn't disturb a
+working scientific stack. The reproducible pins live in `requirements.txt`. If you want
+the exact stack this release was tested against, install those first — from a clone or
+checkout of the same tag — and then the package:
+
+```bash
+python -m pip install -r requirements.txt   # pinned scientific stack (scanpy, scvi-tools, …)
+python -m pip install "git+https://github.com/AllenInstitute/scCairns.git@v0.1.0"
+```
+
+For Code Ocean, the install belongs in the capsule's **`postInstall`**, not in `run` —
+image builds have network access, reproducible runs do not. See
+[Code Ocean](codeocean.md).
+
+### B. From a clone (developing scCairns)
+
+```bash
+git clone https://github.com/AllenInstitute/scCairns.git
 cd scCairns
 
 mamba create -n sccairns -c conda-forge python=3.10 pip scikit-misc -y
@@ -29,26 +73,49 @@ python -m pip install -r requirements.txt   # pinned scientific stack
 python -m pip install -e .                  # the sccairns package + `cairns` CLI
 ```
 
-The editable install puts the `cairns` command on your PATH (`cairns --help`). The
-`code/*.py` scripts remain as backward-compat shims for the Code Ocean capsule.
+The editable install puts the `cairns` command on your PATH and keeps your edits live.
+The `code/*.py` scripts remain as backward-compat shims for the Code Ocean capsule.
+
+### Harmony (optional, either mode)
 
 Harmony is an **optional** integration path, so `harmonypy` is not a core dependency
 of the package. It is pinned in `requirements.txt` (`harmonypy==0.0.10`), and you can
-also install it via the extra: `python -m pip install -e '.[harmony]'`. Only needed if
-you enable the optional [Harmony comparison](configuration.md#harmony-optional);
-everything else works without it. (Note: `harmonypy` 2.x is incompatible — the extra
-caps it `<1`.)
+also install it via the extra: `python -m pip install -e '.[harmony]'` (from a clone) or
+`python -m pip install "scCairns[harmony] @ git+https://github.com/AllenInstitute/scCairns.git@v0.1.0"`.
+Only needed if you enable the optional
+[Harmony comparison](configuration.md#harmony-optional); everything else works without
+it. (Note: `harmonypy` 2.x is incompatible — the extra caps it `<1`.)
 
 ## 3. Verify the install
 
+Either mode:
+
 ```bash
-python -m compileall -q sccairns code tests   # all modules import/compile
-python -m pytest -q                            # the test suite passes
-cairns --help                                  # the CLI is on your PATH
+cairns --help       # the CLI is on your PATH
+cairns --version    # which scCairns is actually running
 ```
 
-If both succeed, you're ready. If `pytest` reports import errors, your environment
-is missing a dependency — re-run the `pip install` step inside the activated env.
+`cairns --version` reports the same identity that gets stamped into every round:
+
+```text
+cairns 0.1.0 (installed)                                  # a pinned release
+cairns 0.1.0 (checkout 76b1acde76a5 in scCairns, dirty)   # an editable clone
+```
+
+`(installed)` means the version is the only identifier available — there is no git
+metadata in an installed distribution — which is exactly why the pin matters. A
+`dirty` checkout means uncommitted changes are in play, and rounds produced from it
+are flagged by `cairns summarize --verify`.
+
+From a clone, also run the suite:
+
+```bash
+python -m compileall -q code tests   # all modules import/compile
+python -m pytest -q                   # the test suite passes
+```
+
+If `pytest` reports import errors, your environment is missing a dependency — re-run
+the `pip install` step inside the activated env.
 
 ## 4. The input data contract
 

@@ -39,6 +39,10 @@ rather than by cloning the repo into each Code Ocean capsule.
   `code` block — the round was untraceable to any code. `repo_root` names the repository
   a commit came from, so a commit picked up from a surrounding project checkout is
   visible rather than mistaken for the pipeline's own.
+- `cairns --version` (also `-V`) reports the running scCairns using the same identity
+  the manifest records — `cairns 0.1.0 (installed)` for a pinned release, or
+  `cairns 0.1.0 (checkout <sha> in <repo>, dirty)` from a working tree. This is how you
+  confirm which build a Code Ocean image actually got.
 - `cairns summarize` falls back to the version when there is no commit: the **Commit**
   column shows `v0.1.0`, `code_version`/`code_source` are exported to `rounds_table.csv`,
   `--verify` reports version drift across rounds when no commits are recorded, and a new
@@ -102,6 +106,17 @@ The project became an installable Python package with a unified CLI, renamed fro
   SNS lives in config defaults), with a forwarding shim at the old path.
 
 ### Documentation
+- [Getting started](docs/getting-started.md) now leads with installing a **pinned
+  release as a dependency** (`pip install "git+…@v0.1.0"`) for analysis projects, with
+  cloning presented as the develop-scCairns path. Covers why the tag must be exact, that
+  the repo is private so pip needs GitHub credentials, and that `pyproject.toml` deps are
+  unpinned by design while `requirements.txt` holds the reproducible pins.
+- [Code Ocean](docs/codeocean.md) gains a section on how `cairns` reaches the capsule:
+  vendored under `code/` versus installed from a pinned tag in `postInstall`, why the
+  install cannot live in `run` (reproducible runs are offline), and why it must not go in
+  the Code-Ocean-generated `Dockerfile`.
+- Fixed a stale verification command in getting-started: `compileall` referenced a
+  root-level `sccairns/` that has not existed since the package moved to `code/sccairns/`.
 - README: `record-filter` added to the module/command table, with a runnable example in
   the provenance section for the interactive-filtering case.
 - `docs/` guide set: getting-started, tutorial, configuration, integration-methods,
