@@ -69,3 +69,35 @@ def test_load_yaml_config_resolves_paths(tmp_path):
 
     assert config["data"]["input_h5ad"] == str(tmp_path / "data/input.h5ad")
     assert config["data"]["output_dir"] == str(tmp_path / "rounds/round_01")
+
+
+def test_config_paths_are_independent_of_cwd(tmp_path, monkeypatch):
+    """A config must resolve the same way from any working directory.
+
+    `cairns` installed as a distribution is invoked from wherever the capsule's
+    run script happens to stand, not from `code/`.
+    """
+    pytest.importorskip("yaml")
+    cfg_path = tmp_path / "project" / "pipeline.yml"
+    cfg_path.parent.mkdir()
+    cfg_path.write_text(
+        "pipeline_version: 1\ndata:\n  input_h5ad: in.h5ad\n  output_dir: out\n",
+        encoding="utf-8",
+    )
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    from_elsewhere = load_pipeline_config(str(cfg_path))
+    monkeypatch.chdir(cfg_path.parent)
+    from_config_dir = load_pipeline_config(str(cfg_path))
+
+    assert from_elsewhere["data"] == from_config_dir["data"]
+    assert from_elsewhere["data"]["output_dir"] == str(cfg_path.parent / "out")
+
+
+def test_no_config_output_dir_default_is_here_not_parent():
+    """Without a config the default is ./results — `../results` only made sense
+    from `code/`, which an installed CLI no longer runs from."""
+    config = load_pipeline_config()
+    assert config["data"]["output_dir"] == "results"

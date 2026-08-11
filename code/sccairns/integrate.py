@@ -1241,7 +1241,8 @@ Sweep config JSON format:
     io.add_argument("--input", required=False, default=None,
                     help="Path to pre-concatenated h5ad.")
     io.add_argument("--output-dir", default=None,
-                    help="Output directory (default: ../results without --config).")
+                    help="Output directory (relative to the current directory; "
+                         "default: ./results without --config).")
 
     # ── QC ──
     qc = parser.add_argument_group("quality control")
@@ -1312,7 +1313,7 @@ Sweep config JSON format:
 
     args = parser.parse_args()
     try:
-        config = load_pipeline_config(args.config, legacy_output_dir="../results")
+        config = load_pipeline_config(args.config)
         apply_integration_cli_overrides(config, args)
         if args.sweep and config["annotation"].get("enabled"):
             raise ConfigError("scANVI annotation is only supported for single-model runs in V1.")

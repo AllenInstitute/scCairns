@@ -155,9 +155,11 @@ Each round writes a cumulative record. Highlights:
 graph, UMAP, and Leiden clustering are deterministic — which makes the Leiden
 **cluster IDs** that `decisions.yaml` references stable across re-runs of the same
 config. Set `seed: null` for an intentionally non-reproducible run. Every
-`round_manifest.json` also records the pipeline's git revision (with a `dirty` flag),
+`round_manifest.json` also identifies the pipeline that ran — its installed `version`,
+plus the git revision and a `dirty` flag when running from a checkout — along with
 a SHA-256 fingerprint of the input, and a `parent_round` pointer linking rounds into
-an explicit lineage. `command_args.json` keeps an append-only history of every stage
+an explicit lineage. Installed from a pinned release rather than a checkout, the version
+is the identifier, so pin an exact tag in whatever builds your environment. `command_args.json` keeps an append-only history of every stage
 invocation. Full field-by-field detail lives in the
 [configuration reference](docs/configuration.md) and
 [interpreting outputs](docs/interpreting-outputs.md).
