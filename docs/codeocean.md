@@ -20,6 +20,43 @@ capsule-specific pieces so the absolute paths and orchestration make sense.
 These files are the GitHub → Code Ocean bridge: push to GitHub, pull into the capsule,
 click Run. Keep their behavior intact.
 
+## How `cairns` gets into the capsule
+
+Two arrangements, depending on whether the capsule *is* this repo.
+
+**Vendored (this repo as a capsule).** The `sccairns` package ships inside `code/` — the
+only folder a reproducible run materializes — so `code/run` puts it on `PYTHONPATH` and
+runs it as a module. No install, no network:
+
+```bash
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+export PYTHONPATH="${HERE}:${PYTHONPATH:-}"
+cairns() { python -m sccairns.cli "$@"; }
+```
+
+**Pinned dependency (a project capsule that is not this repo).** The capsule holds only
+its own `pipeline.yml`, `run`, and `.codeocean/datasets.json`, and scCairns comes from
+the image. Put the install in the capsule's **`postInstall`**:
+
+```bash
+pip install --no-cache-dir "git+https://github.com/AllenInstitute/scCairns.git@v0.1.0"
+```
+
+Then `run` needs no preamble at all — pip puts a real `cairns` on PATH.
+
+Two things to get right. **The install must happen at image build, never in `run`**: a
+reproducible run is offline, so a `pip install` there fails (it works on the Cloud
+Workstation, which is why this is easy to miss). And **put it in `postInstall`, not
+`environment/Dockerfile`** — Code Ocean generates the Dockerfile from the UI package
+list (note its `# hash:sha256:` header) and will overwrite hand edits. Authenticated
+access to the private repo is already wired up: the Dockerfile carries `ARG GIT_ASKPASS`
+and `COPY git-ask-pass /`.
+
+Pin an exact tag. `@main` means rebuilding the image silently changes the tool, and
+since an installed distribution has no git metadata, the pinned version is what each
+`round_manifest.json` records as its `code.version`. Confirm what a built image actually
+got with `cairns --version`.
+
 ## Path conventions inside the capsule
 
 - **Inputs** are mounted read-only under `/data/<mount-name>/` (defined in

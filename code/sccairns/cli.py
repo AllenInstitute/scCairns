@@ -28,13 +28,38 @@ _USAGE = (
     "  record-filter       record provenance for an externally filtered h5ad pair\n"
     "  flag-contamination  marker-based per-cell contamination flagging\n\n"
     "Run 'cairns <command> --help' for command-specific options.\n"
+    "Run 'cairns --version' to see which scCairns is on PATH.\n"
 )
+
+
+def _version_line() -> str:
+    """Identify the running scCairns the same way a round manifest does.
+
+    Answers "which one is installed?" for a pinned deployment, where the version
+    — not a commit — is the identifier stamped into every round.
+    """
+    from .config import collect_code_provenance  # local: keeps --help cheap
+
+    prov = collect_code_provenance()
+    version = prov.get("version") or "unknown version"
+    if prov.get("source") == "checkout":
+        detail = f"checkout {prov.get('commit_short')}"
+        if prov.get("repo_root"):
+            detail += f" in {prov['repo_root']}"
+        if prov.get("dirty"):
+            detail += ", dirty"
+    else:
+        detail = prov.get("source") or "unknown"
+    return f"cairns {version} ({detail})\n"
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if not argv or argv[0] in ("-h", "--help", "help"):
         sys.stdout.write(_USAGE)
+        return 0
+    if argv[0] in ("-V", "--version", "version"):
+        sys.stdout.write(_version_line())
         return 0
     command = argv[0]
     module_name = COMMANDS.get(command)
