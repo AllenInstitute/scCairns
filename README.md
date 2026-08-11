@@ -1,6 +1,6 @@
 # scCairns
 
-<img src="https://github.com/AllenInstitute/scCairns/blob/6fb4fe67a2333c4d33dc39743db2c4c367e77b3c/docs/assets/logo.png" alt="scCairns" width="420">
+<img src="https://github.com/AllenInstitute/scCairns/blob/4040ef68edaafd45f2ad82850c69a41887364491/docs/assets/logo.png" alt="scCairns" width="420">
 
 **Reproducible single-cell integration with a documented decision trail.** Integrate a
 multi-batch dataset with [scVI/scANVI](https://scvi-tools.org/) (or Harmony/Scanorama),
