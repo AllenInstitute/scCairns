@@ -6,6 +6,15 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
+_Nothing yet._
+
+## [0.1.0] — 2026-08-11
+
+First tagged release: the project became an installable Python package with a unified
+CLI, renamed from `scvi_integration_loops` to **scCairns**, and is now consumable as a
+pinned dependency (`pip install git+https://github.com/AllenInstitute/scCairns.git@v0.1.0`)
+rather than by cloning the repo into each Code Ocean capsule.
+
 ### Added
 - `cairns record-filter` (`sccairns.record_filter`): records provenance for a filtering
   step performed **outside** scCairns — e.g. an interactive lasso or cluster selection in
@@ -23,6 +32,17 @@ All notable changes to **scCairns** are documented here. The format is based on
 - `data.obs_filter`: an optional pandas query string applied to `adata.obs` right after
   load (e.g. `"condition in ['Control', 'Saline']"`), for integrating a subset without
   writing a pre-filtered `.h5ad`. Recorded in `round_manifest.json`; `null` disables it.
+- The manifest's `code` block identifies the pipeline by **version as well as commit**:
+  new `version` (installed distribution), `source` (`checkout` / `installed` /
+  `unknown`), and `repo_root` fields. Git metadata only exists when scCairns runs from a
+  checkout, so a wheel installed into a Code Ocean image previously recorded an all-null
+  `code` block — the round was untraceable to any code. `repo_root` names the repository
+  a commit came from, so a commit picked up from a surrounding project checkout is
+  visible rather than mistaken for the pipeline's own.
+- `cairns summarize` falls back to the version when there is no commit: the **Commit**
+  column shows `v0.1.0`, `code_version`/`code_source` are exported to `rounds_table.csv`,
+  `--verify` reports version drift across rounds when no commits are recorded, and a new
+  `code_unidentified` warning fires for a round that records neither identifier.
 - `round_manifest.json` records the full cell-attrition chain for a round —
   `n_cells_input`, `n_genes_input`, `n_cells_after_obs_filter`,
   `n_cells_prefilter_plot`, and `qc_filter_applied` — alongside the existing
@@ -43,6 +63,12 @@ All notable changes to **scCairns** are documented here. The format is based on
 - Retention percentages in the summary report are measured against the first round's
   *input* cell count, so `obs_filter` and QC losses are included. Rounds whose
   manifests predate `n_cells_input` fall back to the old post-QC baseline.
+- The no-config output directory default is `./results` instead of `../results`, which
+  only made sense when the CLI was invoked from `code/`. Paths *inside* a config file are
+  unaffected — they already resolve against the config file's own directory, so a config
+  is portable no matter where `cairns` is invoked from. `cairns integrate` no longer
+  passes the legacy `../results`; every invocation in `code/run` supplies `--config`, so
+  capsule behavior is unchanged.
 
 ### Fixed
 - `qc.skip_filter_after_round_1` is now honored — it was previously declared in the
@@ -53,24 +79,16 @@ All notable changes to **scCairns** are documented here. The format is based on
   pointer); later rounds skip it, so genes are never re-filtered against a subset. This
   was the root cause of neuropeptide genes disappearing between rounds.
 
-### Documentation
-- README: `record-filter` added to the module/command table, with a runnable example in
-  the provenance section for the interactive-filtering case.
+### Packaging and rename
+The project became an installable Python package with a unified CLI, renamed from
+`scvi_integration_loops` to **scCairns**.
 
-## [0.1.0] — unreleased
-
-First packaged release: the project became an installable Python package with a unified
-CLI, renamed from `scvi_integration_loops` to **scCairns**.
-
-### Added
 - Installable `sccairns` package with a single `cairns` command
-  (`cairns integrate | inspect | summarize | flag-contamination`).
+  (`cairns integrate | inspect | summarize | record-filter | flag-contamination`).
 - `inspection.all_architectures` config field to drive per-architecture sweep inspection
   from config (still available as the `--all-sweep-architectures` flag).
 - `cairns summarize` recognizes inspection-only sweep rounds (a re-inspection that writes
   no new `.h5ad`) and splices them inline in the lineage instead of leaving them dangling.
-
-### Changed
 - **Renamed** `scvi_integration_loops` → **scCairns**: import package `sccairns`, PyPI
   distribution `scCairns`, conda env `sccairns`.
 - The package lives at `code/sccairns/` (not the repo root) so Code Ocean reproducible
@@ -84,6 +102,8 @@ CLI, renamed from `scvi_integration_loops` to **scCairns**.
   SNS lives in config defaults), with a forwarding shim at the old path.
 
 ### Documentation
+- README: `record-filter` added to the module/command table, with a runnable example in
+  the provenance section for the interactive-filtering case.
 - `docs/` guide set: getting-started, tutorial, configuration, integration-methods,
   decisions, interpreting-outputs, adapting-to-your-data, troubleshooting, Code Ocean.
 - `examples/make_example_data.py` (synthetic multi-batch generator) + `pipeline_tutorial.yml`

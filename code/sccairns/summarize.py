@@ -443,6 +443,12 @@ def _best_integrated(scores: Dict[str, float]):
     return best, integrated[best]
 
 
+def _code_version_label(m: Dict[str, Any]) -> Optional[str]:
+    """"v<version>" for a round whose code identity is a release, not a commit."""
+    version = _g(m, "code", "version")
+    return f"v{version}" if version else None
+
+
 def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None,
                 acted_on_variant: Optional[str] = None) -> Dict[str, Any]:
     """Build one table row.
@@ -529,7 +535,12 @@ def extract_row(m: Dict[str, Any], parent: Optional[Dict[str, Any]] = None,
         "n_variants": len(scvi_variants) or (1 if embedding_keys else None),
         "variants": ", ".join(scvi_variants) if scvi_variants else None,
         "seed": _g(m, "reproducibility", "seed"),
-        "commit": _g(m, "code", "commit_short"),
+        # An installed (non-checkout) deployment has no commit, so fall back to
+        # the distribution version — otherwise the column reads "—" and the
+        # round looks untraceable when it is merely pinned differently.
+        "commit": _g(m, "code", "commit_short") or _code_version_label(m),
+        "code_version": _g(m, "code", "version"),
+        "code_source": _g(m, "code", "source"),
         "dirty": _g(m, "code", "dirty"),
         "n_clusters": insp.get("n_clusters"),
         "n_auto_flagged": insp.get("n_auto_flagged"),
@@ -624,7 +635,7 @@ def verify(manifests: List[Dict[str, Any]],
                     add(entry, "warn", "missing_manifest",
                         "Directory has h5ad output but no round_manifest.json.")
 
-    seeds, commits = set(), set()
+    seeds, commits, code_versions = set(), set(), set()
     pkg_baseline: Optional[Dict[str, Any]] = None
 
     for m in manifests:
@@ -633,8 +644,16 @@ def verify(manifests: List[Dict[str, Any]],
         if seed is not None:
             seeds.add(seed)
         commit = _g(m, "code", "commit")
+        code_version = _g(m, "code", "version")
         if commit:
             commits.add(commit)
+        if code_version:
+            code_versions.add(code_version)
+        if not commit and not code_version:
+            add(rid, "warn", "code_unidentified",
+                "Round records neither a git commit nor a scCairns version — the "
+                "code that produced it cannot be identified. Install scCairns as "
+                "a pinned distribution, or run it from a checkout.")
         if _g(m, "code", "dirty") is True:
             add(rid, "warn", "dirty_tree",
                 "Round was produced from a dirty working tree (uncommitted changes).")
@@ -722,6 +741,13 @@ def verify(manifests: List[Dict[str, Any]],
         add("(global)", "warn", "code_drift",
             f"Rounds were produced at {len(commits)} different commits — config "
             "alone does not pin the code that ran.")
+    # Rounds run from an installed distribution carry no commit, so version drift
+    # is the only signal that the tool changed between them.
+    if not commits and len(code_versions) > 1:
+        add("(global)", "warn", "code_drift",
+            f"Rounds were produced by {len(code_versions)} different scCairns "
+            f"versions ({', '.join(sorted(code_versions))}) — config alone does "
+            "not pin the code that ran.")
 
     return findings
 

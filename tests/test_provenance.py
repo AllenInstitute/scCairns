@@ -45,10 +45,41 @@ def test_collect_code_provenance_shape():
     prov = collect_code_provenance()
     # The repo is a git checkout, so a commit should be captured here. Even
     # outside a checkout the keys must always be present (values may be None).
-    for key in ("commit", "commit_short", "branch", "commit_time", "dirty"):
+    for key in ("version", "source", "commit", "commit_short", "branch",
+                "commit_time", "repo_root", "dirty"):
         assert key in prov
     if prov["commit"] is not None:
         assert prov["commit_short"] == prov["commit"][:12]
+        assert prov["source"] == "checkout"
+
+
+def test_collect_code_provenance_outside_a_checkout(tmp_path, monkeypatch):
+    """A wheel in site-packages has no .git — the version must still identify it.
+
+    This is the deployment where scCairns is pip-installed into a Code Ocean
+    image rather than vendored in the capsule, so it is the case that must not
+    silently produce an unidentifiable round.
+    """
+    from sccairns import config as cfg
+
+    monkeypatch.setattr(cfg, "package_version", lambda: "0.1.0")
+    prov = cfg.collect_code_provenance(repo_dir=str(tmp_path))
+
+    assert prov["commit"] is None
+    assert prov["repo_root"] is None
+    assert prov["version"] == "0.1.0"
+    assert prov["source"] == "installed"
+
+
+def test_collect_code_provenance_unidentified(tmp_path, monkeypatch):
+    """Neither git nor an installed distribution: say so rather than imply a match."""
+    from sccairns import config as cfg
+
+    monkeypatch.setattr(cfg, "package_version", lambda: None)
+    prov = cfg.collect_code_provenance(repo_dir=str(tmp_path))
+
+    assert prov["version"] is None
+    assert prov["source"] == "unknown"
 
 
 def test_fingerprint_file_roundtrip(tmp_path):

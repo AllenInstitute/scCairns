@@ -342,6 +342,47 @@ def test_legacy_manifest_without_input_count(tmp_path):
     assert metrics["retention_pct"] == 100.0
 
 
+def _set_code_block(rounds: Path, round_id: str, **code):
+    p = rounds / round_id / "round_manifest.json"
+    m = json.loads(p.read_text())
+    m["code"] = code
+    p.write_text(json.dumps(m))
+
+
+def test_installed_deployment_reports_version_instead_of_commit(tmp_path):
+    # A round produced by a pip-installed scCairns: no commit, but a version.
+    _round1(tmp_path)
+    _set_code_block(tmp_path, "round_01", version="0.1.0", source="installed",
+                    commit=None, commit_short=None, dirty=None)
+    manifests, _ = _load_ordered(tmp_path)
+    row = sr.extract_row(manifests[0])
+
+    assert row["code_version"] == "0.1.0"
+    assert row["code_source"] == "installed"
+    assert row["commit"] == "v0.1.0"          # not "—"
+    assert "v0.1.0" in sr.render_markdown_table([row])
+
+
+def test_verify_detects_version_drift_and_unidentified_code(tmp_path):
+    integ = _round1(tmp_path)
+    _round2(tmp_path, integ)
+    _set_code_block(tmp_path, "round_01", version="0.1.0", source="installed",
+                    commit=None, dirty=None)
+    _set_code_block(tmp_path, "round_02", version="0.2.0", source="installed",
+                    commit=None, dirty=None)
+
+    manifests, parent_map = _load_ordered(tmp_path)
+    checks = {f["check"]: f for f in sr.verify(manifests, parent_map)}
+    assert "0.1.0, 0.2.0" in checks["code_drift"]["message"]
+
+    # Neither identifier: the round cannot be traced to any code at all.
+    _set_code_block(tmp_path, "round_02", version=None, source="unknown",
+                    commit=None, dirty=None)
+    manifests, parent_map = _load_ordered(tmp_path)
+    checks = {f["check"]: f for f in sr.verify(manifests, parent_map)}
+    assert checks["code_unidentified"]["round"] == "round_02"
+
+
 def test_verify_flags_pre_integration_drop_and_input_mismatch(tmp_path):
     integ = _round1(tmp_path)
     _round2(tmp_path, integ)

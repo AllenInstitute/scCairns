@@ -45,7 +45,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "data": {
         "input_h5ad": None,
-        "output_dir": "../results",
+        # Relative to the current directory. Paths set in a config file are
+        # resolved against that file's location instead (_resolve_config_paths),
+        # so a config is portable no matter where `cairns` is invoked from.
+        "output_dir": "results",
         "counts_layer": "counts",
         "batch_key": "data_origin",
         "categorical_covariate_keys": ["tech"],
@@ -463,13 +466,32 @@ def set_global_seed(seed: Optional[int]) -> Optional[int]:
     return seed
 
 
-def collect_code_provenance(repo_dir: Optional[str] = None) -> Dict[str, Any]:
-    """Capture the pipeline's own git revision for the running code.
+def package_version() -> Optional[str]:
+    """Version of the installed scCairns distribution, or None if not installed."""
+    try:
+        return metadata.version("scCairns")
+    except metadata.PackageNotFoundError:
+        return None
 
-    Returns a dict with the commit SHA, short SHA, branch, a ``dirty`` flag
-    (uncommitted tracked changes present), and the commit timestamp. Every
-    field is None/False when git metadata is unavailable (e.g. not a checkout
-    or git not installed) so the manifest still records the attempt.
+
+def collect_code_provenance(repo_dir: Optional[str] = None) -> Dict[str, Any]:
+    """Capture the identity of the pipeline code that is running.
+
+    Two independent identifiers, because deployments differ. ``version`` comes
+    from the installed distribution and is present whenever scCairns was pip
+    installed. The git fields only exist when the code runs from a checkout —
+    a wheel in ``site-packages`` has no ``.git`` above it, so a capsule that
+    installs a pinned release records a version and a null commit. ``source``
+    says which identifier to trust:
+
+    - ``"checkout"`` — running from a git working tree; ``commit`` is exact.
+    - ``"installed"`` — running from an installed distribution; ``version`` is
+      the only identifier, so pin it in the environment that built the image.
+    - ``"unknown"`` — neither is available; the round is not traceable to code.
+
+    ``repo_root`` names the repository the commit came from, so a commit picked
+    up from a surrounding project checkout is visible rather than silently
+    recorded as the pipeline's own.
     """
     if repo_dir is None:
         repo_dir = os.path.dirname(os.path.abspath(__file__))
@@ -490,14 +512,20 @@ def collect_code_provenance(repo_dir: Optional[str] = None) -> Dict[str, Any]:
         return out.stdout.strip()
 
     commit = _git("rev-parse", "HEAD")
+    version = package_version()
     provenance: Dict[str, Any] = {
+        "version": version,
+        "source": "checkout" if commit else ("installed" if version else "unknown"),
         "commit": commit,
         "commit_short": commit[:12] if commit else None,
         "branch": _git("rev-parse", "--abbrev-ref", "HEAD"),
         "commit_time": _git("show", "-s", "--format=%cI", "HEAD"),
+        "repo_root": None,
         "dirty": None,
     }
     if commit is not None:
+        toplevel = _git("rev-parse", "--show-toplevel")
+        provenance["repo_root"] = os.path.basename(toplevel) if toplevel else None
         status = _git("status", "--porcelain")
         # status is "" when clean; None when the command failed.
         provenance["dirty"] = bool(status) if status is not None else None
