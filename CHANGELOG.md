@@ -6,28 +6,7 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
-### Added
-- `cairns record-filter` accepts **cell-ID lists** in place of `.h5ad` files:
-  `--input-cell-ids` / `--output-cell-ids`. The filtered side is only ever read for the
-  IDs that survived, so a tool that cannot write AnnData — Seurat, Loupe — can hand back
-  a CSV of barcodes instead. Reads a bare one-per-line list, this command's own
-  `cells_to_keep.csv`, and both common R exports (`write.csv(data.frame(x = Cells(obj)))`,
-  which prepends a row-number column, and `write.csv(obj@meta.data)`, where the barcodes
-  are rownames). Duplicate IDs are rejected.
-- The manifest records a `compared` block (`{"input": "h5ad"|"cell_ids", "output": …}`)
-  plus `input_cell_ids`/`output_cell_ids` paths, so a null `input_genes`/`output_genes`
-  or a missing per-cluster breakdown reads as a consequence of what was compared rather
-  than a gap.
-
-### Changed
-- `record-filter`'s `--embedding-key` is now **optional**. A filter applied at ingest —
-  Seurat QC before any integration — has no embedding or clustering, and the command
-  already degraded to a single generic action in that case; only the CLI's `required=True`
-  stood in the way. Warnings no longer fire for an embedding or cluster key that was
-  never named, so the expected ingest case is silent.
-- Mismatched cell IDs now explain the likely cause instead of just listing the offenders:
-  Seurat merges appending `_1`, sample-name prefixes, and `-1` suffix changes all break
-  ID matching, and the error says so.
+_Nothing yet._
 
 ## [0.1.0] — 2026-08-11
 
@@ -48,6 +27,18 @@ rather than by cloning the repo into each Code Ocean capsule.
   `cells_removed.csv`, and `decisions_applied.yaml`. Cluster and UMAP keys are inferred
   from `--embedding-key` when not passed; missing keys warn rather than fail, but an
   output containing cell IDs absent from the input is an error.
+- `record-filter` accepts **cell-ID lists** in place of `.h5ad` files:
+  `--input-cell-ids` / `--output-cell-ids`. The filtered side is only ever read for the
+  IDs that survived, so a tool that cannot write AnnData — Seurat, Loupe — can hand back
+  a CSV of barcodes instead. Reads a bare one-per-line list, its own `cells_to_keep.csv`,
+  and both common R exports (`write.csv(data.frame(x = Cells(obj)))`, which prepends a
+  row-number column, and `write.csv(obj@meta.data)`, where the barcodes are rownames).
+  Duplicate IDs are rejected, and mismatched IDs name the likely cause — Seurat merges
+  appending `_1`, sample-name prefixes, and `-1` suffix changes all break ID matching.
+  `--embedding-key` is optional, for a filter applied at ingest before any embedding or
+  clustering exists. The manifest records a `compared` block
+  (`{"input": "h5ad"|"cell_ids", "output": …}`) so a null `input_genes`/`output_genes` or
+  a missing per-cluster breakdown reads as a consequence rather than a gap.
 - `round_manifest.json` now records `is_first_round` (derived from the parent-round
   pointer) so it is explicit whether QC filtering ran for the round.
 - `data.obs_filter`: an optional pandas query string applied to `adata.obs` right after
@@ -127,6 +118,9 @@ The project became an installable Python package with a unified CLI, renamed fro
   SNS lives in config defaults), with a forwarding shim at the old path.
 
 ### Documentation
+- [Filtering outside scCairns](docs/decisions.md) — recording a filter applied in Seurat,
+  Loupe, or a notebook: the accepted cell-ID export shapes, what an ID list costs you
+  versus an `.h5ad`, and why cell IDs must survive the round trip unchanged.
 - [Getting started](docs/getting-started.md) now leads with installing a **pinned
   release as a dependency** (`pip install "git+…@v0.1.0"`) for analysis projects, with
   cloning presented as the develop-scCairns path. Covers why the tag must be exact, that
