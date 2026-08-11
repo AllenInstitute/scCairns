@@ -90,7 +90,7 @@ the report and authors the `decisions.yaml` — that's the one non-automated gat
 | `sccairns.integrate` — `cairns integrate` | QC, HVG selection, scVI training, optional scANVI annotation, UMAP/Leiden, benchmarking → `integrated.h5ad` |
 | `sccairns.inspect` — `cairns inspect` | Inspection report, cluster QC, auto-flags, and decisions-based filtering |
 | `sccairns.summarize` — `cairns summarize` | Cross-round summary: table, decisions ledger, Mermaid lineage, integrity report |
-| `sccairns.record_filter` — `cairns record-filter` | Record provenance for an externally/interactively filtered `.h5ad` pair |
+| `sccairns.record_filter` — `cairns record-filter` | Record provenance for a filter applied outside scCairns (Seurat, Loupe, a notebook), from an `.h5ad` pair or cell-ID lists |
 | `sccairns.contamination` — `cairns flag-contamination` | Marker-based per-cell contamination flagging (used by inspection) |
 | `sccairns.config` | Shared config defaults, validation, and provenance helpers |
 
@@ -176,6 +176,12 @@ cairns record-filter \
   --filter-used "Removed non-neuronal clusters from interactive review" \
   --notes "Manual lasso/cluster filtering in interactive mode"
 ```
+
+Either side can be a list of cell IDs instead of an `.h5ad` (`--input-cell-ids` /
+`--output-cell-ids`), so a tool that can't write AnnData — Seurat, Loupe — can hand back
+just the barcodes it kept. `--embedding-key` is optional, for a filter applied at ingest
+before any embedding exists. See
+[filtering outside scCairns](docs/decisions.md#filtering-outside-sccairns-seurat-loupe-a-notebook).
 
 ## Summarizing a completed set of rounds
 
