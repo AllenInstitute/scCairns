@@ -6,7 +6,28 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
-_Nothing yet._
+### Added
+- `cairns record-filter` accepts **cell-ID lists** in place of `.h5ad` files:
+  `--input-cell-ids` / `--output-cell-ids`. The filtered side is only ever read for the
+  IDs that survived, so a tool that cannot write AnnData — Seurat, Loupe — can hand back
+  a CSV of barcodes instead. Reads a bare one-per-line list, this command's own
+  `cells_to_keep.csv`, and both common R exports (`write.csv(data.frame(x = Cells(obj)))`,
+  which prepends a row-number column, and `write.csv(obj@meta.data)`, where the barcodes
+  are rownames). Duplicate IDs are rejected.
+- The manifest records a `compared` block (`{"input": "h5ad"|"cell_ids", "output": …}`)
+  plus `input_cell_ids`/`output_cell_ids` paths, so a null `input_genes`/`output_genes`
+  or a missing per-cluster breakdown reads as a consequence of what was compared rather
+  than a gap.
+
+### Changed
+- `record-filter`'s `--embedding-key` is now **optional**. A filter applied at ingest —
+  Seurat QC before any integration — has no embedding or clustering, and the command
+  already degraded to a single generic action in that case; only the CLI's `required=True`
+  stood in the way. Warnings no longer fire for an embedding or cluster key that was
+  never named, so the expected ingest case is silent.
+- Mismatched cell IDs now explain the likely cause instead of just listing the offenders:
+  Seurat merges appending `_1`, sample-name prefixes, and `-1` suffix changes all break
+  ID matching, and the error says so.
 
 ## [0.1.0] — 2026-08-11
 
