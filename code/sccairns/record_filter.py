@@ -380,8 +380,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Record provenance for a filtering step performed outside "
                     "scCairns. Give each side as an .h5ad or as a list of cell "
-                    "IDs (one per line, or the first column of a CSV) — the "
-                    "latter lets Seurat/Loupe hand back only the cells kept.",
+                    "IDs (one per line, or a column of a CSV) — the latter lets "
+                    "Seurat/Loupe hand back only the cells kept.",
     )
     before = parser.add_mutually_exclusive_group(required=True)
     before.add_argument("--input-h5ad", help="Input h5ad before filtering.")
