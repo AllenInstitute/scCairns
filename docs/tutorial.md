@@ -137,6 +137,21 @@ keep/remove action, a Mermaid lineage diagram, and `--verify` integrity checks
 (input-hash continuity, seed/commit drift). The round table here shows
 round_01 (2,060 cells, 7 clusters) → round_02 (1,740 cells, 4 clusters).
 
+## What if you don't want to use the pipeline?
+
+`cairns` reporting and summaries are available outside of a full pipeline run. You can use it interactively to log processing steps, or as part of a CodeOcean or nextflow pipeline by pointing `cairns record-filter` to the pre-filter ("`input-h5ad`") and post-filter ("`output-h5ad`") files. Or, you can supply a list of IDs in place of input/output `.h5ad` files. It will write `round_manifest.yml` and `decisions_applied.yml` files, which can be later read by `cairns summarize` 
+
+```
+cairns record-filter \
+  --input-h5ad  "../data/260811_ssv4.h5ad" \
+  --output-h5ad "../data/filtered260811_ssv4.h5ad" \
+  --output-dir  "../results/" \
+  --filter-used "Exclude.STAR == No; percent.mt > 20 removed; IQR multiplier = 4" \
+  --notes "DRG_QC.R; report: 260811_ssv4_QC_report.html" \
+|| echo "WARNING: cairns record-filter failed, continuing"
+
+```
+
 ## What you just learned
 
 - The loop is **integrate → inspect → decide → filter → re-integrate**, with a human
