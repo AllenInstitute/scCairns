@@ -32,8 +32,7 @@ so the paths just work.)
 ## Step 1 — Integrate (round 1)
 
 ```bash
-cd code
-python integrate_scvi.py --config ../examples/pipeline_tutorial.yml
+cairns integrate --config examples/pipeline_tutorial.yml
 ```
 
 Outputs land in `examples/tutorial_run/rounds/round_01/`. The key file is
@@ -45,7 +44,7 @@ input fingerprint), `scib_benchmark_results.csv`, and QC plots.
 ## Step 2 — Inspect (round 1)
 
 ```bash
-python inspect_integration.py --config ../examples/pipeline_tutorial.yml
+cairns inspect --config examples/pipeline_tutorial.yml
 ```
 
 Open `examples/tutorial_run/rounds/round_01/inspection_report.html`. On this dataset
@@ -90,11 +89,11 @@ notes: "Tutorial round 1 review."
 ## Step 4 — Filter into round 2
 
 ```bash
-python inspect_integration.py \
-  --config ../examples/pipeline_tutorial.yml \
-  --input ../examples/tutorial_run/rounds/round_01/integrated.h5ad \
-  --decisions ../examples/tutorial_run/rounds/round_01/decisions.yaml \
-  --output-dir ../examples/tutorial_run/rounds/round_02
+cairns inspect \
+  --config examples/pipeline_tutorial.yml \
+  --input examples/tutorial_run/rounds/round_01/integrated.h5ad \
+  --decisions examples/tutorial_run/rounds/round_01/decisions.yaml \
+  --output-dir examples/tutorial_run/rounds/round_02
 ```
 
 This writes `round_02/filtered.h5ad` plus `decisions_applied.yaml` (what actually
@@ -106,15 +105,15 @@ to zero retention).
 ## Step 5 — Re-integrate and inspect (round 2)
 
 ```bash
-python integrate_scvi.py \
-  --config ../examples/pipeline_tutorial.yml \
-  --input ../examples/tutorial_run/rounds/round_02/filtered.h5ad \
-  --output-dir ../examples/tutorial_run/rounds/round_02
+cairns integrate \
+  --config examples/pipeline_tutorial.yml \
+  --input examples/tutorial_run/rounds/round_02/filtered.h5ad \
+  --output-dir examples/tutorial_run/rounds/round_02
 
-python inspect_integration.py \
-  --config ../examples/pipeline_tutorial.yml \
-  --input ../examples/tutorial_run/rounds/round_02/integrated.h5ad \
-  --output-dir ../examples/tutorial_run/rounds/round_02
+cairns inspect \
+  --config examples/pipeline_tutorial.yml \
+  --input examples/tutorial_run/rounds/round_02/integrated.h5ad \
+  --output-dir examples/tutorial_run/rounds/round_02
 ```
 
 Round 2 is the payoff: **no clusters are auto-flagged**, and contamination drops from
@@ -125,10 +124,10 @@ to *stop* iterating (more on stopping criteria in
 ## Step 6 — Summarize the rounds
 
 ```bash
-python summarize_rounds.py \
-  --rounds-dir ../examples/tutorial_run/rounds \
+cairns summarize \
+  --rounds-dir examples/tutorial_run/rounds \
   --verify \
-  --output-dir ../examples/tutorial_run/summary
+  --output-dir examples/tutorial_run/summary
 ```
 
 Open `examples/tutorial_run/summary/pipeline_summary.html`. You get a round table
@@ -139,9 +138,16 @@ round_01 (2,060 cells, 7 clusters) → round_02 (1,740 cells, 4 clusters).
 
 ## What if you don't want to use the pipeline?
 
-`cairns` reporting and summaries are available outside of a full pipeline run. You can use it interactively to log processing steps, or as part of a CodeOcean or nextflow pipeline by pointing `cairns record-filter` to the pre-filter ("`input-h5ad`") and post-filter ("`output-h5ad`") files. Or, you can supply a list of IDs in place of input/output `.h5ad` files. It will write `round_manifest.yml` and `decisions_applied.yml` files, which can be later read by `cairns summarize` 
+`cairns` reporting and summaries are available outside of a full pipeline run. You can
+use it interactively to log processing steps, or as part of a Code Ocean or Nextflow
+pipeline, by pointing `cairns record-filter` at the pre-filter (`--input-h5ad`) and
+post-filter (`--output-h5ad`) files. Or you can supply a list of cell IDs
+(`--input-cell-ids` / `--output-cell-ids`) in place of either `.h5ad` — useful when the
+filtering happened in a tool that can't write AnnData, such as Seurat. It writes
+`round_manifest.json` and `decisions_applied.yaml` (plus `cells_to_keep.csv` and
+`cells_removed.csv`), which `cairns summarize` reads later.
 
-```
+```bash
 cairns record-filter \
   --input-h5ad  "../data/260811_ssv4.h5ad" \
   --output-h5ad "../data/filtered260811_ssv4.h5ad" \
@@ -149,8 +155,13 @@ cairns record-filter \
   --filter-used "Exclude.STAR == No; percent.mt > 20 removed; IQR multiplier = 4" \
   --notes "DRG_QC.R; report: 260811_ssv4_QC_report.html" \
 || echo "WARNING: cairns record-filter failed, continuing"
-
 ```
+
+No `--embedding-key` here because this filter ran at ingest, before any embedding or
+clustering existed. Point `--output-dir` at the directory that will hold the filtered
+`.h5ad` if you want the next round to pick this up as its parent — the lineage link is
+found by looking for a `round_manifest.json` beside the input file. See
+[filtering outside scCairns](decisions.md#filtering-outside-sccairns-seurat-loupe-a-notebook).
 
 ## What you just learned
 

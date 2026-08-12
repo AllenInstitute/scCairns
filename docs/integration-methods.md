@@ -31,7 +31,7 @@ integration:
 Any of these can also be overridden per-run on the CLI (they win over the YAML):
 
 ```bash
-python code/integrate_scvi.py --config pipeline.yml \
+cairns integrate --config pipeline.yml \
   --n-hidden 128 --n-layers 2 --n-latent 24 --gene-likelihood zinb
 ```
 
@@ -133,7 +133,7 @@ adata.write_h5ad("rounds/round_01/integrated.h5ad")
 Then inspect and filter against those keys — the rest of the workflow is unchanged:
 
 ```bash
-python code/inspect_integration.py --config pipeline.yml \
+cairns inspect --config pipeline.yml \
   --input rounds/round_01/integrated.h5ad \
   --latent-key X_scanorama \
   --umap-key   X_umap_scanorama \
