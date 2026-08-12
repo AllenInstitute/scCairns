@@ -57,7 +57,7 @@ decisions:
 ## Running a filter
 
 ```bash
-python code/inspect_integration.py \
+cairns inspect \
   --config pipeline.yml \
   --input  rounds/round_01/integrated.h5ad \
   --decisions rounds/round_01/decisions.yaml \

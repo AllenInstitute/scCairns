@@ -7,6 +7,11 @@ All notable changes to **scCairns** are documented here. The format is based on
 ## [Unreleased]
 
 ### Documentation
+- The tutorial, decisions, and integration-methods guides now invoke the `cairns` CLI
+  instead of `python code/<script>.py`. Those calls predate the packaging; they also
+  required a `cd code`, so every path in the tutorial was relative to a directory the
+  reader had no other reason to be in — and the tutorial's own preamble said to run from
+  the repo root. The `code/*.py` shims remain for the Code Ocean capsule.
 - README's "one full round, locally" ends with `cairns summarize --rounds-dir rounds
   --verify`, so the quick start covers the step that actually checks the round rather
   than stopping at re-integration.
