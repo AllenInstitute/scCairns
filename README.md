@@ -131,7 +131,15 @@ cairns inspect --config pipeline.yml \
 # 4. re-integrate the filtered object for the next round
 cairns integrate --config pipeline.yml \
   --input rounds/round_02/filtered.h5ad --output-dir rounds/round_02
+
+# 5. summarize every round so far: table, decisions ledger, lineage, integrity checks
+cairns summarize --rounds-dir rounds --verify
 ```
+
+Step 5 writes to `rounds/summary/` and is worth running even after a single round —
+`--verify` is what catches a dirty working tree, seed or version drift between rounds,
+and an input whose content no longer matches what the parent round produced. Add
+`--strict` to exit non-zero on any finding, which is what you want inside a pipeline.
 
 Prefer a guided, runnable version? Follow the **[tutorial](docs/tutorial.md)** — it
 generates a synthetic dataset and walks the whole loop with expected numbers.

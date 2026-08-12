@@ -7,6 +7,9 @@ All notable changes to **scCairns** are documented here. The format is based on
 ## [Unreleased]
 
 ### Documentation
+- README's "one full round, locally" ends with `cairns summarize --rounds-dir rounds
+  --verify`, so the quick start covers the step that actually checks the round rather
+  than stopping at re-integration.
 - [Configuration reference](docs/configuration.md) documents `cairns record-filter`,
   which is deliberately config-free — every flag, which of them are required, and why the
   flags belong in a run script rather than a config a later round could silently reuse.
