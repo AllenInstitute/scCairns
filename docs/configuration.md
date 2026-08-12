@@ -22,7 +22,8 @@ it**. For the raw templates see `examples/pipeline_scvi.yml` (mouse/SNS),
 | Field | Default | When to change |
 |---|---|---|
 | `input_h5ad` | `null` | Required. Path to the combined counts h5ad (resolved relative to the config file). |
-| `output_dir` | `../results` | Where this round writes. Give each round its own directory. |
+| `output_dir` | `results` | Where this round writes. Give each round its own directory. A relative path here is resolved against **the config file's location**, so a config works from any working directory; the bare default applies only when no config is given, and then it is relative to the current directory. |
+| `obs_filter` | `null` | A pandas query applied to `adata.obs` right after load, e.g. `"condition in ['Control', 'Saline']"`. Integrates a subset without writing a pre-filtered h5ad. Recorded in `round_manifest.json`, and the cells it drops are accounted for by `n_cells_after_obs_filter` — see [interpreting outputs](interpreting-outputs.md#cell-counts-in-round_manifestjson). |
 | `counts_layer` | `counts` | Only if your raw counts live in a differently named layer. |
 | `batch_key` | `data_origin` | The `obs` column scVI integrates over. **Set this to your batch/sample variable.** |
 | `categorical_covariate_keys` | `[tech]` | Extra nuisance factors to condition on (platform, chemistry). Set `[]` if none. |
@@ -112,6 +113,32 @@ flagging. Marker sets and panels are covered in
 `ignore_failed_queries` (default `false`): a `decisions.yaml` query that references a
 missing column or errors is a **hard failure** by default, so a typo can't silently
 skip a filter. Set `true` to restore permissive behavior.
+
+## `record-filter` (no config block)
+
+`cairns record-filter` is deliberately **config-free** — it takes no `--config` and
+reads nothing from `pipeline.yml`. It records a filtering step that already happened
+somewhere else, so there is no shared state to inherit: everything it writes comes from
+the two objects you point it at plus the flags below. See
+[filtering outside scCairns](decisions.md#filtering-outside-sccairns-seurat-loupe-a-notebook)
+for the workflow.
+
+| Flag | Required | Notes |
+|---|---|---|
+| `--input-h5ad` / `--input-cell-ids` | one of the two | The cells **before** filtering. An h5ad also supplies the gene count, the cluster column for a per-cluster breakdown, and a parent-round pointer; an ID list gives only the IDs. |
+| `--output-h5ad` / `--output-cell-ids` | one of the two | The cells that **survived**. An ID list is enough — a CSV column of barcodes, a bare one-per-line file, or R's `write.csv` output. |
+| `--output-dir` | yes | Where `round_manifest.json` and the sidecars go. Make this the directory holding the filtered h5ad, so the next round's `data.input_h5ad` sits beside the manifest and the lineage links up. |
+| `--filter-used` | yes | Human-readable description of what was removed. This is the only record of *why*, so make it specific — and make it match what actually ran. |
+| `--embedding-key` | no | The embedding the filtering was done on. Sets `filtered_on.variant` and infers the cluster/UMAP keys. **Omit at ingest**, before any embedding or clustering exists. |
+| `--cluster-key` | no | Overrides the cluster key inferred from `--embedding-key`, for the per-cluster removal breakdown. |
+| `--umap-key` | no | Overrides the UMAP key inferred from `--embedding-key`; recorded for provenance only. |
+| `--notes` | no | Free text. A good place for the path to an external QC report. |
+| `--seed` | no | Stamped into the manifest's `reproducibility` block, if the external step used one. |
+| `--batch-key` | no | Recorded for provenance; not used to compute anything. |
+
+Because it is config-free, the flags are the whole interface — which means they belong
+in your run script next to the command that produced the filtered object, not in a
+config file that a later round might silently reuse.
 
 ## Sweeps
 

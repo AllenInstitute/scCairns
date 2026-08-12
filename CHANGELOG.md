@@ -6,7 +6,13 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
-_Nothing yet._
+### Documentation
+- [Configuration reference](docs/configuration.md) documents `cairns record-filter`,
+  which is deliberately config-free — every flag, which of them are required, and why the
+  flags belong in a run script rather than a config a later round could silently reuse.
+- Same page: added the missing `data.obs_filter` field, and corrected the `data.output_dir`
+  default (`../results` → `results`) with a note that a relative path in a config resolves
+  against the config file's own location.
 
 ## [0.1.0] — 2026-08-11
 
