@@ -30,6 +30,28 @@ One row per cluster. The columns that drive decisions:
 | `neighbor_purity` | Fraction of a typical cell's nearest neighbors sharing its cluster label | Below `min_neighbor_purity` (default 0.50) the cluster has no territory of its own — it is a split or a passenger, not a population |
 | `neighbor_entropy` | Normalized (0–1) diversity of cluster labels in the neighborhood | Read *with* purity: low purity + low entropy = absorbed by one cluster; low purity + high entropy = diffuse across many. On its own it cannot detect an absorbed cluster, which scores 0 |
 | `dominant_neighbor` / `_frac` | Which other cluster the neighborhood belongs to, and how much of the foreign neighbors it accounts for | A high fraction names the merge candidate |
+| `<key>_depleted` / `_depletion_ratio` / `_depletion_q` | The platform, batch, or donor most missing from this cluster, as a fraction of what chance predicts, with an FDR-corrected p-value | A ratio near 0 at low `q` means the group is absent beyond chance — e.g. a cluster with no SSv4 cells |
+| `<key>_top` / `_enrichment` / `_enrich_q` | The group most over-represented, as a multiple of its expected share | Enrichment ≫ 1 at low `q` on the donor key means one donor carries the cluster |
+| `<key>_n_groups_present` | How many levels of that key appear at all | Necessary but not sufficient — with large donors every cluster contains every donor |
+
+### Compositional bias: why a test, not a fraction
+
+A cluster's composition alone cannot tell you whether it is anomalous. With 15% SSv4
+overall, a **20-cell** cluster containing no SSv4 has p ≈ 0.04 — that happens by chance —
+while a **200-cell** cluster containing none has p ≈ 2e-15. Both are "100% one platform"
+and any `dominant_*_frac > 0.9` rule scores them identically. The hypergeometric test
+asks the right question: *given this cluster's size, how surprising is this makeup?*
+
+Flagging requires **both** a significance gate (`composition_q`) and an effect-size gate
+(`min_enrichment`, `max_depletion_ratio`), because once clusters are large almost any
+deviation becomes statistically significant. In testing, 400-cell clusters differing from
+background by 1.1–1.3× reached q ≈ 1e-3 while being entirely unremarkable biologically.
+
+**A significant result is not a verdict.** The null is that cells land in clusters
+without regard to platform or donor. If one platform was FACS-sorted and the other was
+not, every cluster outside the sorted population is genuinely depleted of it — correct
+biology, not junk. The flag says "explain this", not "remove this", which is why its
+message ends with a prompt to check the sampling design.
 | `median_genes` | Complexity | Low values (< `min_genes_threshold`, default 400) → low-quality/empty droplets |
 | `median_pct_mt` | Mitochondrial fraction | High values (> `mt_threshold`, default 15%) → dying/stressed cells |
 | `dominant_batch_frac` | Batch purity | > `single_batch_threshold` (default 0.90) → a batch artifact, not biology |

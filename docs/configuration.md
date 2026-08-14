@@ -24,6 +24,7 @@ it**. For the raw templates see `examples/pipeline_scvi.yml` (mouse/SNS),
 | `input_h5ad` | `null` | Required. Path to the combined counts h5ad (resolved relative to the config file). |
 | `output_dir` | `results` | Where this round writes. Give each round its own directory. A relative path here is resolved against **the config file's location**, so a config works from any working directory; the bare default applies only when no config is given, and then it is relative to the current directory. |
 | `obs_filter` | `null` | A pandas query applied to `adata.obs` right after load, e.g. `"condition in ['Control', 'Saline']"`. Integrates a subset without writing a pre-filtered h5ad. Recorded in `round_manifest.json`, and the cells it drops are accounted for by `n_cells_after_obs_filter` — see [interpreting outputs](interpreting-outputs.md#cell-counts-in-round_manifestjson). |
+| `sample_key` | `null` | Donor / biological-replicate column (e.g. `donor_id`). **Not** used for integration — it is the grouping the per-cluster donor-bias test runs over, so a cluster carried by a single donor can be told from one present across all of them. Set it if you want that test. |
 | `counts_layer` | `counts` | Only if your raw counts live in a differently named layer. |
 | `batch_key` | `data_origin` | The `obs` column scVI integrates over. **Set this to your batch/sample variable.** |
 | `categorical_covariate_keys` | `[tech]` | Extra nuisance factors to condition on (platform, chemistry). Set `[]` if none. |
@@ -105,6 +106,18 @@ space: fewer than this fraction of a typical cell's nearest neighbors carry its 
 cluster label. The flag names the cluster the neighborhood *does* belong to when one
 dominates, which is the difference between "merge this into cluster 7" and "this is
 diffuse, drop it". Set `null` to disable.
+
+The **compositional bias** keys — `composition_q` 0.01, `composition_min_cells` 20,
+`min_enrichment` 2.0, `max_depletion_ratio` 0.20, `composition_keys` null — test whether
+each cluster's platform/batch/donor makeup is what chance would give, by hypergeometric
+test with Benjamini–Hochberg correction. `composition_keys: null` tests `data.batch_key`,
+`data.sample_key`, and the categorical covariates; give an explicit list to override.
+Flagging needs **both** gates to trip: `composition_q` for significance and
+`min_enrichment` / `max_depletion_ratio` for effect size, because once clusters are large
+almost any deviation is significant. Clusters below `composition_min_cells` are not
+tested and are excluded from the FDR correction rather than diluting it. Set
+`composition_q: null` to disable. Full rationale in
+[interpreting outputs](interpreting-outputs.md#compositional-bias-why-a-test-not-a-fraction).
 
 `entropy_threshold` is a second, opt-in test on neighborhood label entropy, off by
 default because entropy measures how *diverse* a neighborhood is rather than how much

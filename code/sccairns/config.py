@@ -53,6 +53,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "batch_key": "data_origin",
         "categorical_covariate_keys": ["tech"],
         "continuous_covariate_keys": [],
+        # Donor / biological replicate column. Not used for integration; it is
+        # the grouping the per-cluster donor-bias test runs over, so a cluster
+        # carried by one donor can be told from one present across all of them.
         "sample_key": None,
         "technology_key": "tech",
         "species": "mouse",
@@ -159,6 +162,17 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             # fewer than this fraction of a typical cell's neighbors carry its
             # own cluster label. Set null to disable.
             "min_neighbor_purity": 0.50,
+            # Compositional bias: is a cluster's platform/donor makeup what
+            # chance would give? Tested (hypergeometric + BH) rather than
+            # thresholded on a fraction, which cannot tell a 20-cell cluster
+            # missing a batch from a 200-cell one. Both a significance and an
+            # effect-size gate must trip. Set composition_q null to disable.
+            "composition_q": 0.01,
+            "composition_min_cells": 20,
+            "min_enrichment": 2.0,        # top group >= this multiple of expected
+            "max_depletion_ratio": 0.20,  # depleted group <= this fraction of expected
+            # obs columns to test; null → batch_key + sample_key + covariates.
+            "composition_keys": None,
             # Secondary, off by default. Entropy measures how *diverse* a
             # neighborhood is, not how much of it agrees, so a cluster fully
             # absorbed into one other scores 0 — purity is the reliable test.
