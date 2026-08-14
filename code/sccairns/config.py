@@ -155,6 +155,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "min_cells": 20,
             "single_batch_threshold": 0.90,
             "silhouette_threshold": -0.05,
+            # Flags clusters with no territory of their own in the latent space:
+            # fewer than this fraction of a typical cell's neighbors carry its
+            # own cluster label. Set null to disable.
+            "min_neighbor_purity": 0.50,
+            # Secondary, off by default. Entropy measures how *diverse* a
+            # neighborhood is, not how much of it agrees, so a cluster fully
+            # absorbed into one other scores 0 — purity is the reliable test.
+            "entropy_threshold": None,
+            "entropy_neighbors": 15,
         },
         # Marker-based per-cell contamination flagging (cluster-independent).
         # panels defaults to flag_contamination.DEFAULT_CONTAM_PANELS when unset;

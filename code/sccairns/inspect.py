@@ -217,8 +217,27 @@ def _median_silhouette_by_cluster(adata, obs, cluster_key, obsm_key):
     return obs.groupby(cluster_key, observed=False)[sil_col].median()
 
 
+def _neighborhood_coherence_by_cluster(adata, cluster_key, latent_key,
+                                       n_neighbors=15):
+    """Per-cluster neighbor purity and label entropy, if a latent space exists.
+
+    Returns None when there is no usable embedding or fewer than two clusters,
+    matching how the silhouette columns are handled.
+    """
+    if not latent_key or latent_key not in adata.obsm:
+        return None
+    if adata.obs[cluster_key].nunique() < 2 or adata.n_obs < 3:
+        return None
+
+    from .entropy import cluster_label_coherence
+
+    return cluster_label_coherence(
+        adata, cluster_key, use_rep=latent_key, n_neighbors=n_neighbors)
+
+
 def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
-                        latent_key=None, umap_key=None, covariate_keys=None):
+                        latent_key=None, umap_key=None, covariate_keys=None,
+                        entropy_neighbors=15):
     """Compute per-cluster QC statistics.
 
     Returns a DataFrame with one row per cluster, columns:
@@ -275,6 +294,19 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
     if sil_umap is not None:
         df["silhouette_umap"] = df.index.map(sil_umap)
 
+    coherence = _neighborhood_coherence_by_cluster(
+        adata, cluster_key, latent_key, n_neighbors=entropy_neighbors
+    )
+    if coherence is not None:
+        df["neighbor_purity"] = df.index.astype(str).map(
+            coherence["purity_median"])
+        df["neighbor_entropy"] = df.index.astype(str).map(
+            coherence["entropy_median"])
+        df["dominant_neighbor"] = df.index.astype(str).map(
+            coherence["dominant_neighbor"])
+        df["dominant_neighbor_frac"] = df.index.astype(str).map(
+            coherence["dominant_neighbor_frac"])
+
     return df
 
 
@@ -284,8 +316,18 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
 
 def auto_flag_clusters(summary_df, mt_threshold=15.0, min_genes_threshold=400,
                         min_cells=20, single_batch_threshold=0.90,
-                        silhouette_threshold=-0.05, covariate_keys=None):
+                        silhouette_threshold=-0.05, min_neighbor_purity=0.50,
+                        entropy_threshold=None, covariate_keys=None):
     """Flag clusters that meet common removal criteria.
+
+    ``min_neighbor_purity`` catches clusters that are not well supported in the
+    embedding: fewer than this fraction of a typical cell's nearest neighbors
+    carry its own cluster label. ``entropy_threshold`` (off by default) adds a
+    second, weaker test on neighborhood label entropy — weaker because entropy
+    measures how *diverse* a neighborhood is, not how much of it agrees, so a
+    cluster wholly absorbed into one other cluster scores 0 entropy, the same as
+    a perfectly isolated one. Purity separates those; entropy only describes
+    which kind of mixing is happening once purity has flagged it.
 
     Returns a dict: {cluster_id: [reason1, reason2, ...]}
     """
@@ -329,6 +371,31 @@ def auto_flag_clusters(summary_df, mt_threshold=15.0, min_genes_threshold=400,
                 f"Poor latent separation "
                 f"(silhouette {row['silhouette_latent']:.3f} "
                 f"< {silhouette_threshold})")
+
+        if (min_neighbor_purity is not None and "neighbor_purity" in row
+                and pd.notna(row["neighbor_purity"])
+                and row["neighbor_purity"] < min_neighbor_purity):
+            # Naming the absorbing cluster says whether to merge or drop; a low
+            # dominant fraction means it is spread across many, not one.
+            detail = ""
+            if ("dominant_neighbor" in row and pd.notna(row["dominant_neighbor"])
+                    and pd.notna(row.get("dominant_neighbor_frac"))):
+                if row["dominant_neighbor_frac"] >= 0.5:
+                    detail = (f" — {row['dominant_neighbor_frac']:.0%} of its "
+                              f"neighborhood is cluster {row['dominant_neighbor']}")
+                else:
+                    detail = " — spread across several clusters"
+            reasons.append(
+                f"Not well supported in the embedding (only "
+                f"{row['neighbor_purity']:.0%} of neighbors share its label "
+                f"< {min_neighbor_purity:.0%}){detail}")
+
+        if (entropy_threshold is not None and "neighbor_entropy" in row
+                and pd.notna(row["neighbor_entropy"])
+                and row["neighbor_entropy"] > entropy_threshold):
+            reasons.append(
+                f"High neighborhood entropy "
+                f"({row['neighbor_entropy']:.2f} > {entropy_threshold})")
 
         if reasons:
             flags[str(cl)] = reasons
@@ -1211,8 +1278,12 @@ def write_auto_flags_yaml(flags, summary_df, output_path, thresholds,
         f"  min_genes: {thresholds['min_genes']}",
         f"  min_cells: {thresholds['min_cells']}",
         f"  single_batch_frac: {thresholds['single_batch']}",
-        "",
     ])
+    if thresholds.get("min_neighbor_purity") is not None:
+        lines.append(f"  min_neighbor_purity: {thresholds['min_neighbor_purity']}")
+    if thresholds.get("entropy") is not None:
+        lines.append(f"  neighbor_entropy: {thresholds['entropy']}")
+    lines.append("")
 
     if flags:
         lines.append("remove_clusters:")
@@ -1620,7 +1691,9 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
     summary = cluster_qc_summary(
         adata, cluster_key=cluster_key, batch_key=batch_key,
         latent_key=latent_key, umap_key=umap_key,
-        covariate_keys=covariate_keys)
+        covariate_keys=covariate_keys,
+        entropy_neighbors=inspection_cfg["auto_flag"].get(
+            "entropy_neighbors", 15))
     summary.to_csv(os.path.join(output_dir, "cluster_qc_summary.csv"))
     print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
     print(summary.to_string())
@@ -1656,6 +1729,8 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         "min_genes": auto_flag_cfg["min_genes_threshold"],
         "min_cells": auto_flag_cfg["min_cells"],
         "single_batch": auto_flag_cfg["single_batch_threshold"],
+        "min_neighbor_purity": auto_flag_cfg.get("min_neighbor_purity", 0.50),
+        "entropy": auto_flag_cfg.get("entropy_threshold"),
     }
     flags = auto_flag_clusters(
         summary,
@@ -1664,6 +1739,8 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         min_cells=auto_flag_cfg["min_cells"],
         single_batch_threshold=auto_flag_cfg["single_batch_threshold"],
         silhouette_threshold=auto_flag_cfg.get("silhouette_threshold", -0.05),
+        min_neighbor_purity=auto_flag_cfg.get("min_neighbor_purity", 0.50),
+        entropy_threshold=auto_flag_cfg.get("entropy_threshold"),
         covariate_keys=covariate_keys,
     )
 

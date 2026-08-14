@@ -27,6 +27,9 @@ One row per cluster. The columns that drive decisions:
 | Column | What it tells you | Watch for |
 |---|---|---|
 | `n_cells` | Cluster size | Tiny clusters (< `min_cells`, default 20) are unstable |
+| `neighbor_purity` | Fraction of a typical cell's nearest neighbors sharing its cluster label | Below `min_neighbor_purity` (default 0.50) the cluster has no territory of its own — it is a split or a passenger, not a population |
+| `neighbor_entropy` | Normalized (0–1) diversity of cluster labels in the neighborhood | Read *with* purity: low purity + low entropy = absorbed by one cluster; low purity + high entropy = diffuse across many. On its own it cannot detect an absorbed cluster, which scores 0 |
+| `dominant_neighbor` / `_frac` | Which other cluster the neighborhood belongs to, and how much of the foreign neighbors it accounts for | A high fraction names the merge candidate |
 | `median_genes` | Complexity | Low values (< `min_genes_threshold`, default 400) → low-quality/empty droplets |
 | `median_pct_mt` | Mitochondrial fraction | High values (> `mt_threshold`, default 15%) → dying/stressed cells |
 | `dominant_batch_frac` | Batch purity | > `single_batch_threshold` (default 0.90) → a batch artifact, not biology |

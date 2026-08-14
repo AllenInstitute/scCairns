@@ -6,6 +6,30 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
+### Added
+- `sccairns.entropy`: neighborhood label entropy and neighbor purity, computed on a k-NN
+  graph over any `obsm` embedding. `neighborhood_entropy()` scores each cell (useful for
+  batch mixing or annotation disagreement); `cluster_label_coherence()` aggregates per
+  cluster. Ported from an R implementation, with the neighbor graph built on the full
+  embedding rather than a single component, vectorized (100k cells × 30 dims, k=15, two
+  annotations in ~4.5s), and missing labels excluded from a neighborhood rather than
+  counted as their own category.
+- `cairns inspect` flags clusters that are **not well supported in the embedding**:
+  `cluster_qc_summary.csv` gains `neighbor_purity`, `neighbor_entropy`,
+  `dominant_neighbor`, and `dominant_neighbor_frac`, and `inspection.auto_flag`
+  gains `min_neighbor_purity` (default 0.50), `entropy_threshold` (default null, opt-in),
+  and `entropy_neighbors` (default 15). The flag names the absorbing cluster when one
+  dominates — "only 10% of neighbors share its label — 100% of its neighborhood is
+  cluster 0" — which distinguishes a merge candidate from a diffuse cluster to drop.
+
+  The flag is keyed on **purity rather than entropy** deliberately. Entropy measures how
+  diverse a neighborhood is, not how much of it agrees, so a cluster wholly absorbed into
+  another has a homogeneous neighborhood — of someone else's label — and scores near-zero
+  entropy, tying with a perfectly isolated cluster. In testing, an entropy ranking placed
+  the absorbed cluster at or below the healthy cluster hosting it, so no entropy threshold
+  could catch it without also flagging good clusters. Entropy is still reported, and is
+  the right statistic for characterizing *which kind* of mixing a flagged cluster has.
+
 ### Documentation
 - The tutorial, decisions, and integration-methods guides now invoke the `cairns` CLI
   instead of `python code/<script>.py`. Those calls predate the packaging; they also
