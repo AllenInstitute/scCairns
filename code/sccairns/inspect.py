@@ -237,7 +237,8 @@ def _neighborhood_coherence_by_cluster(adata, cluster_key, latent_key,
 
 def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
                         latent_key=None, umap_key=None, covariate_keys=None,
-                        entropy_neighbors=15):
+                        entropy_neighbors=15, composition_keys=None,
+                        composition_min_cells=20):
     """Compute per-cluster QC statistics.
 
     Returns a DataFrame with one row per cluster, columns:
@@ -307,6 +308,19 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
         df["dominant_neighbor_frac"] = df.index.astype(str).map(
             coherence["dominant_neighbor_frac"])
 
+    # Is this cluster's platform/donor makeup what chance would give? Tested
+    # rather than thresholded, because a fraction cannot distinguish a 20-cell
+    # cluster missing a batch from a 200-cell one.
+    for key in (composition_keys or []):
+        from .composition import compositional_bias
+
+        bias = compositional_bias(
+            obs, cluster_key, key,
+            min_cells=composition_min_cells, prefix=key,
+        )
+        for column in bias.columns:
+            df[column] = df.index.astype(str).map(bias[column])
+
     return df
 
 
@@ -317,7 +331,9 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
 def auto_flag_clusters(summary_df, mt_threshold=15.0, min_genes_threshold=400,
                         min_cells=20, single_batch_threshold=0.90,
                         silhouette_threshold=-0.05, min_neighbor_purity=0.50,
-                        entropy_threshold=None, covariate_keys=None):
+                        entropy_threshold=None, covariate_keys=None,
+                        composition_keys=None, composition_q=0.01,
+                        min_enrichment=2.0, max_depletion_ratio=0.20):
     """Flag clusters that meet common removal criteria.
 
     ``min_neighbor_purity`` catches clusters that are not well supported in the
@@ -396,6 +412,28 @@ def auto_flag_clusters(summary_df, mt_threshold=15.0, min_genes_threshold=400,
             reasons.append(
                 f"High neighborhood entropy "
                 f"({row['neighbor_entropy']:.2f} > {entropy_threshold})")
+
+        # Compositional bias. Both gates matter: significance alone fires on
+        # trivially small deviations once clusters are large, and effect size
+        # alone fires on small clusters where the deviation is chance.
+        for key in (composition_keys or []):
+            q_dep = row.get(f"{key}_depletion_q")
+            ratio = row.get(f"{key}_depletion_ratio")
+            if (composition_q is not None and pd.notna(q_dep) and pd.notna(ratio)
+                    and q_dep < composition_q and ratio <= max_depletion_ratio):
+                reasons.append(
+                    f"Depleted of a {key} level ({row[f'{key}_depleted']}: "
+                    f"{ratio:.0%} of expected, q={q_dep:.1e}) — check whether "
+                    f"that group was sampled differently before removing")
+
+            q_enr = row.get(f"{key}_enrich_q")
+            enrichment = row.get(f"{key}_enrichment")
+            if (composition_q is not None and pd.notna(q_enr)
+                    and pd.notna(enrichment) and q_enr < composition_q
+                    and enrichment >= min_enrichment):
+                reasons.append(
+                    f"Dominated by one {key} ({row[f'{key}_top']}: "
+                    f"{enrichment:.1f}x its expected share, q={q_enr:.1e})")
 
         if reasons:
             flags[str(cl)] = reasons
@@ -1688,12 +1726,26 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
 
     # 2. Cluster QC summary
     print("  Computing cluster QC summary...")
+    from .composition import resolve_composition_keys
+
+    _auto_flag_cfg = inspection_cfg["auto_flag"]
+    composition_keys = resolve_composition_keys(
+        adata.obs,
+        batch_key=batch_key,
+        sample_key=data_cfg.get("sample_key"),
+        covariate_keys=covariate_keys,
+        explicit=_auto_flag_cfg.get("composition_keys"),
+    )
+    if composition_keys:
+        print(f"  Compositional bias tested over: {', '.join(composition_keys)}")
+
     summary = cluster_qc_summary(
         adata, cluster_key=cluster_key, batch_key=batch_key,
         latent_key=latent_key, umap_key=umap_key,
         covariate_keys=covariate_keys,
-        entropy_neighbors=inspection_cfg["auto_flag"].get(
-            "entropy_neighbors", 15))
+        entropy_neighbors=_auto_flag_cfg.get("entropy_neighbors", 15),
+        composition_keys=composition_keys,
+        composition_min_cells=_auto_flag_cfg.get("composition_min_cells", 20))
     summary.to_csv(os.path.join(output_dir, "cluster_qc_summary.csv"))
     print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
     print(summary.to_string())
@@ -1742,6 +1794,10 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         min_neighbor_purity=auto_flag_cfg.get("min_neighbor_purity", 0.50),
         entropy_threshold=auto_flag_cfg.get("entropy_threshold"),
         covariate_keys=covariate_keys,
+        composition_keys=composition_keys,
+        composition_q=auto_flag_cfg.get("composition_q", 0.01),
+        min_enrichment=auto_flag_cfg.get("min_enrichment", 2.0),
+        max_depletion_ratio=auto_flag_cfg.get("max_depletion_ratio", 0.20),
     )
 
     if flags:

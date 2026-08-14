@@ -7,6 +7,28 @@ All notable changes to **scCairns** are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- `sccairns.composition`: per-cluster compositional bias testing. `compositional_bias()`
+  asks whether a cluster's platform/batch/donor makeup is what random assignment would
+  give — hypergeometric, both tails (a missing platform is *depletion*, a dominating donor
+  is *enrichment*), Bonferroni-corrected within a cluster for the group being chosen by
+  inspection and Benjamini–Hochberg across clusters. `cairns inspect` runs it over
+  `data.batch_key`, `data.sample_key`, and the categorical covariates by default, adding
+  `<key>_depleted`, `<key>_depletion_ratio`, `<key>_depletion_q`, `<key>_top`,
+  `<key>_enrichment`, `<key>_enrich_q`, and `<key>_n_groups_present` to
+  `cluster_qc_summary.csv`, with new `inspection.auto_flag` keys `composition_q` (0.01),
+  `composition_min_cells` (20), `min_enrichment` (2.0), `max_depletion_ratio` (0.20), and
+  `composition_keys` (null → auto).
+
+  This exists because composition alone is not evidence. With 15% SSv4 overall, a 20-cell
+  cluster with no SSv4 (p ≈ 0.04, i.e. chance) and a 200-cell cluster with no SSv4
+  (p ≈ 2e-15, i.e. impossible) are both "100% one platform" and score identically under
+  any `dominant_*_frac` threshold. Flagging requires a significance **and** an effect-size
+  gate, since at 400 cells a biologically unremarkable 1.1–1.3× deviation already reaches
+  q ≈ 1e-3. The flag's message ends by prompting a check of the sampling design, because
+  a platform that was FACS-sorted differently will legitimately be absent from whole
+  clusters.
+- `data.sample_key` is now read. It was declared in `DEFAULT_CONFIG` but consumed by no
+  code; it names the donor / biological-replicate column the donor-bias test groups over.
 - `sccairns.entropy`: neighborhood label entropy and neighbor purity, computed on a k-NN
   graph over any `obsm` embedding. `neighborhood_entropy()` scores each cell (useful for
   batch mixing or annotation disagreement); `cluster_label_coherence()` aggregates per
@@ -31,6 +53,13 @@ All notable changes to **scCairns** are documented here. The format is based on
   the right statistic for characterizing *which kind* of mixing a flagged cluster has.
 
 ### Documentation
+- [`archive/PIANO_INTEGRATION_ASSESSMENT.md`](archive/PIANO_INTEGRATION_ASSESSMENT.md) —
+  point-in-time feasibility review of adding [PIANO](https://github.com/NingWang1729/piano)
+  as an integration method. **Not implemented:** the code seam is ~1 day (Harmony is the
+  precedent), but PIANO requires Python ≥3.11 and numpy ≥2 while the Code Ocean image is
+  `python3.10.12` with `numpy==1.26.4` pinned, so the real cost is an environment
+  migration. Also records the GPL-3.0 licensing question and a zero-code path for
+  evaluating PIANO out-of-band today.
 - The tutorial, decisions, and integration-methods guides now invoke the `cairns` CLI
   instead of `python code/<script>.py`. Those calls predate the packaging; they also
   required a `cd code`, so every path in the tutorial was relative to a directory the
