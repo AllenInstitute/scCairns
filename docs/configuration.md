@@ -97,7 +97,23 @@ design).
 object). The `auto_flag` block sets the thresholds documented in
 [interpreting-outputs.md](interpreting-outputs.md#cluster-qc-cluster_qc_summarycsv):
 `mt_threshold` 15.0, `min_genes_threshold` 400, `min_cells` 20,
-`single_batch_threshold` 0.90, `silhouette_threshold` −0.05. The `contamination` block
+`single_batch_threshold` 0.90, `silhouette_threshold` −0.05,
+`min_neighbor_purity` 0.50, `entropy_threshold` null, `entropy_neighbors` 15.
+
+`min_neighbor_purity` flags a cluster with no territory of its own in the latent
+space: fewer than this fraction of a typical cell's nearest neighbors carry its own
+cluster label. The flag names the cluster the neighborhood *does* belong to when one
+dominates, which is the difference between "merge this into cluster 7" and "this is
+diffuse, drop it". Set `null` to disable.
+
+`entropy_threshold` is a second, opt-in test on neighborhood label entropy, off by
+default because entropy measures how *diverse* a neighborhood is rather than how much
+of it agrees. A cluster wholly absorbed into one other cluster has a homogeneous
+neighborhood — of someone else's label — and so scores near-zero entropy, the same as a
+perfectly isolated cluster. Purity separates those two cases; entropy only describes
+which kind of mixing is happening once purity has flagged it. The per-cluster values
+(`neighbor_purity`, `neighbor_entropy`, `dominant_neighbor`, `dominant_neighbor_frac`)
+are written to `cluster_qc_summary.csv` either way. The `contamination` block
 (`z_thresh` 2.0, `min_genes` 2, `layer` null, `panels` null→built-in) controls per-cell
 flagging. Marker sets and panels are covered in
 [adapting to your data](adapting-to-your-data.md).
