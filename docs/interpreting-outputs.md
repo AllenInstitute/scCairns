@@ -63,6 +63,26 @@ visualization that can exaggerate or invent gaps. The latent space is what scVI
 actually models, so it's the honest basis for a keep/remove call. UMAP compactness
 stays a separate visual cue.
 
+## Doublet score by cluster (`doublet_score_by_cluster.png`)
+
+Rendered only when a per-cell `doublet_score` is present in `obs`. Nothing in scCairns
+computes it — the panel plots whatever an upstream step produced (DoubletFinder in R,
+`sc.pp.scrublet`, anything else), so it appears when the column exists and is silently
+skipped when it doesn't. See
+[the doublet-detection assessment](../archive/DOUBLET_DETECTION_ASSESSMENT.md) for why
+native scoring is not implemented.
+
+Doublet callers model co-encapsulation in a droplet, so a plate-based arm (SSv4) is
+normally left unscored. **Unscored cells are excluded, not treated as zero** — the title
+reports how many of the total were scored and names the platforms that carry a score, and
+each cluster's tick label shows its scored `n`. A cluster whose median sits well above the
+rest is a doublet candidate; if an optional call column (`predicted_doublet`, or
+DoubletFinder's `DF.classifications`) is present, the fraction called is overlaid on the
+right axis.
+
+Read it alongside `neighbor_purity`: a doublet-rich cluster sitting between two real
+populations usually shows low purity with the two parents as its `dominant_neighbor`.
+
 ## Auto-flags (`auto_flags.yaml`)
 
 The inspection writes a *suggested* set of removals — any cluster tripping one of the

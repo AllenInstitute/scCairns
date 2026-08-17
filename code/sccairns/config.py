@@ -179,6 +179,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "entropy_threshold": None,
             "entropy_neighbors": 15,
         },
+        # Per-cell doublet scores, if something upstream produced them (e.g.
+        # DoubletFinder in R). Nothing is computed here — the inspection report
+        # plots whatever is present, restricted to the cells that carry a score,
+        # since droplet-based callers leave a plate-based arm unscored (NaN).
+        "doublets": {
+            "score_key": "doublet_score",
+            "call_key": "predicted_doublet",   # optional boolean call column
+            "platform_key": None,              # null → data.batch_key
+        },
         # Marker-based per-cell contamination flagging (cluster-independent).
         # panels defaults to flag_contamination.DEFAULT_CONTAM_PANELS when unset;
         # override with {label: [gene, ...]} to score custom lineages.

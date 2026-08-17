@@ -691,6 +691,42 @@ def _fmt_annot(value, col_name):
     return f"{value:.1f}"
 
 
+def _fmt_q_value(value):
+    """Render a q-value without destroying its exponent.
+
+    Rounding to two decimals turns every significant result into ``0.0`` —
+    wrong, and indistinguishable from a marginal one.
+    """
+    if pd.isna(value):
+        return ""
+    if value == 0:
+        return "<1e-300"          # underflowed; do not imply an exact zero
+    if value < 1e-3:
+        return f"{value:.2e}"
+    return f"{value:.3f}"
+
+
+def _fmt_summary_float(value):
+    return "" if pd.isna(value) else f"{value:.2f}"
+
+
+def summary_table_formatters(summary_df):
+    """Per-column display formatters for the cluster QC summary.
+
+    Columns ending in ``_q`` keep scientific notation; other floats get two
+    decimals. Applied to both the console table and the HTML report so the two
+    agree.
+    """
+    formatters = {}
+    for column in summary_df.columns:
+        if summary_df[column].dtype.kind != "f":
+            continue
+        formatters[column] = (
+            _fmt_q_value if str(column).endswith("_q") else _fmt_summary_float
+        )
+    return formatters
+
+
 def plot_qc_summary_heatmap(summary_df, flags, output_dir):
     """Heatmap of per-cluster QC metrics with flagged clusters highlighted."""
     cols = [c for c in ["n_cells", "median_genes", "median_counts",
@@ -1025,6 +1061,119 @@ def plot_contamination_marker_boxplots(adata, contam_flags, panels, output_dir,
     fig.suptitle("Marker expression: flagged vs unflagged cells", y=1.02)
     fig.tight_layout()
     fig.savefig(os.path.join(output_dir, "contamination_marker_boxplots.png"),
+                dpi=150, bbox_inches="tight")
+    return _fig_to_base64(fig)
+
+
+#: Values a doublet-call column may use for "this is a doublet". DoubletFinder
+#: writes the strings "Doublet"/"Singlet"; scanpy's scrublet writes booleans.
+_DOUBLET_TRUTHY = {"doublet", "true", "yes", "1"}
+
+
+def _as_doublet_calls(column):
+    """Coerce a doublet-call column to a boolean array, or all-False if absent.
+
+    Handles the three forms these columns arrive in: booleans (scrublet), a
+    numeric 0/1 flag, and DoubletFinder's "Doublet"/"Singlet" strings — the last
+    of which would silently become all-False under a numeric coercion.
+    """
+    if column is None:
+        return False
+    if column.dtype.kind == "b":
+        return column.to_numpy()
+    numeric = pd.to_numeric(column, errors="coerce")
+    if numeric.notna().any():
+        return numeric.fillna(0).to_numpy() > 0
+    return (column.astype(str).str.strip().str.lower()
+            .isin(_DOUBLET_TRUTHY).to_numpy())
+
+
+def plot_doublet_score_by_cluster(adata, cluster_key, output_dir,
+                                  score_key="doublet_score",
+                                  platform_key=None, call_key=None):
+    """Per-cluster distribution of a per-cell doublet score, where one exists.
+
+    Agnostic about what produced the score — DoubletFinder upstream in R, or
+    ``sc.pp.scrublet`` — it plots whatever ``score_key`` column is present.
+
+    Scores are typically available for **only some platforms**: doublet callers
+    model co-encapsulation in a droplet, so a plate-based arm (SSv4) is usually
+    left unscored and arrives as NaN. Those cells are excluded rather than
+    treated as zero, and the platforms that contributed are named in the title,
+    so a cluster's median is never diluted by cells that were never scored.
+
+    Returns None (with an INFO note) when no score column exists or nothing in it
+    is finite, so the report simply omits the panel.
+    """
+    if score_key not in adata.obs.columns:
+        print(f"  [INFO] No '{score_key}' in obs — skipping doublet score plot.")
+        return None
+
+    scores = pd.to_numeric(adata.obs[score_key], errors="coerce")
+    scored = scores.notna().to_numpy()
+    if not scored.any():
+        print(f"  [INFO] '{score_key}' has no finite values — skipping "
+              "doublet score plot.")
+        return None
+
+    frame = pd.DataFrame({
+        "cluster": adata.obs[cluster_key].astype(str).to_numpy(),
+        "score": scores.to_numpy(),
+        "called": _as_doublet_calls(adata.obs.get(call_key)),
+    })[scored]
+
+    # Name the platforms that actually carry a score, so the reader knows the
+    # panel describes a subset of the object.
+    platforms = None
+    if platform_key and platform_key in adata.obs.columns:
+        present = adata.obs.loc[scored, platform_key].astype(str)
+        platforms = sorted(present.unique())
+
+    clusters = sorted(frame["cluster"].unique(),
+                      key=lambda x: int(x) if x.isdigit() else x)
+    grouped = [frame.loc[frame["cluster"] == c, "score"].to_numpy()
+               for c in clusters]
+    n_scored = [len(g) for g in grouped]
+
+    fig, ax = plt.subplots(figsize=(max(6, len(clusters) * 0.85 + 1), 4.5))
+    parts = ax.violinplot(grouped, positions=range(len(clusters)),
+                          showextrema=False, widths=0.85)
+    for body in parts["bodies"]:
+        body.set_facecolor("#4477AA")
+        body.set_alpha(0.55)
+    ax.boxplot(grouped, positions=range(len(clusters)), widths=0.18,
+               showfliers=False,
+               medianprops=dict(color="#B33018", linewidth=1.6),
+               boxprops=dict(color="#333333"),
+               whiskerprops=dict(color="#333333"),
+               capprops=dict(color="#333333"))
+
+    if frame["called"].any():
+        twin = ax.twinx()
+        fracs = [float(frame.loc[frame["cluster"] == c, "called"].mean())
+                 for c in clusters]
+        # Markers only: the x axis is categorical, so a connecting line would
+        # imply continuity between clusters.
+        twin.plot(range(len(clusters)), fracs, "o", color="#CC7A00",
+                  markersize=6, label=f"fraction {call_key}")
+        twin.set_ylabel(f"fraction {call_key}", color="#CC7A00")
+        twin.set_ylim(0, 1)
+        twin.tick_params(axis="y", labelcolor="#CC7A00")
+        twin.legend(loc="upper right", fontsize=8)
+
+    ax.set_xticks(range(len(clusters)))
+    ax.set_xticklabels([f"{c}\nn={n}" for c, n in zip(clusters, n_scored)],
+                       fontsize=8)
+    ax.set_xlabel(f"{cluster_key} (n = cells with a {score_key})")
+    ax.set_ylabel(score_key)
+
+    title = f"Doublet score by cluster — {int(scored.sum()):,} of " \
+            f"{adata.n_obs:,} cells scored"
+    if platforms:
+        title += f"\nscored platforms: {', '.join(platforms)}"
+    ax.set_title(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "doublet_score_by_cluster.png"),
                 dpi=150, bbox_inches="tight")
     return _fig_to_base64(fig)
 
@@ -1521,8 +1670,9 @@ def generate_html_report(summary_df, flags, images, adata, output_path,
           <td>{reason_html}</td>
         </tr>"""
 
-    summary_html = summary_df.round(2).to_html(
-        classes="summary-table", border=0)
+    summary_html = summary_df.to_html(
+        classes="summary-table", border=0,
+        formatters=summary_table_formatters(summary_df))
 
     img_sections = ""
     for title, b64 in images.items():
@@ -1748,7 +1898,7 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         composition_min_cells=_auto_flag_cfg.get("composition_min_cells", 20))
     summary.to_csv(os.path.join(output_dir, "cluster_qc_summary.csv"))
     print(f"  Saved cluster_qc_summary.csv ({len(summary)} clusters)")
-    print(summary.to_string())
+    print(summary.to_string(formatters=summary_table_formatters(summary)))
 
     # 3. Marker fraction table + neuronal cluster identification
     print("\n  Computing marker expression fractions...")
@@ -1898,6 +2048,16 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
 
     images["Cluster Silhouettes"] = plot_cluster_silhouettes(
         summary, output_dir)
+
+    # Only rendered when a per-cell doublet score is present — computed upstream
+    # (DoubletFinder in R) or by a future in-pipeline caller. Scored platforms
+    # only; unscored arms are NaN and excluded.
+    doublet_cfg = inspection_cfg.get("doublets") or {}
+    images["Doublet Score by Cluster"] = plot_doublet_score_by_cluster(
+        adata, cluster_key, output_dir,
+        score_key=doublet_cfg.get("score_key", "doublet_score"),
+        platform_key=doublet_cfg.get("platform_key") or batch_key,
+        call_key=doublet_cfg.get("call_key", "predicted_doublet"))
 
     annotation_low_conf = pd.DataFrame()
     prediction_key = annotation_cfg.get("prediction_key")

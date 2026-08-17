@@ -180,3 +180,44 @@ def test_composition_flagging_is_disablable():
     assert auto_flag_clusters(summary, min_cells=1, composition_keys=["tech"],
                               composition_q=None,
                               min_neighbor_purity=None) == {}
+
+
+# ── Display formatting ────────────────────────────────────────────────────────
+
+def test_q_values_keep_their_exponent_in_the_report():
+    """Regression: the summary table used to be `.round(2)`-ed for HTML, which
+    rendered every significant q-value as 0.0 — wrong, and indistinguishable
+    from a marginal one."""
+    pytest.importorskip("scanpy")
+    from sccairns.inspect import summary_table_formatters
+
+    df = pd.DataFrame({
+        "n_cells": [300, 250, 400],
+        "median_pct_mt": [3.14159, 2.71828, 4.5],
+        "tech_depleted": ["SSv4", "10x", "SSv4"],
+        "tech_depletion_q": [6.81e-20, 1.0, 0.00229],
+        "donor_id_enrich_q": [0.00299, 1.62e-97, 0.0],
+    }, index=["2", "3", "0"])
+
+    formatters = summary_table_formatters(df)
+    rendered = df.to_string(formatters=formatters)
+
+    assert "6.81e-20" in rendered
+    assert "1.62e-97" in rendered
+    assert "<1e-300" in rendered          # underflow is not reported as zero
+    assert "0.002" in rendered            # above 1e-3 stays decimal
+    assert "3.14" in rendered             # other floats still get 2 decimals
+    # Non-float columns are left alone.
+    assert "SSv4" in rendered
+    assert "n_cells" not in formatters
+
+
+def test_formatters_apply_to_the_html_report_too():
+    pytest.importorskip("scanpy")
+    from sccairns.inspect import summary_table_formatters
+
+    df = pd.DataFrame({"tech_depletion_q": [6.81e-20]}, index=["2"])
+    html = df.to_html(formatters=summary_table_formatters(df))
+
+    assert "6.81e-20" in html
+    assert ">0.0<" not in html
