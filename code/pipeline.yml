@@ -11,7 +11,7 @@ data:
   batch_key: tech
   categorical_covariate_keys: []
   continuous_covariate_keys: []
-  sample_key: null
+  sample_key: animal_id
   technology_key: tech
   species: mouse
   gene_symbol_case: preserve

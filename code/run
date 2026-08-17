@@ -34,7 +34,7 @@ cairns() { python -m sccairns.cli "$@"; }
 # 8/14/26 re-inspect after making some inspect changes
 cairns inspect --config pipeline.yml \
 --input /data/260807_cmg_int_round_02/rounds/round_02/integrated.h5ad \
---output-dir /root/capsule/results/rounds/round_02_inspect2
+--output-dir /root/capsule/results/rounds/round_02_inspect2 \
 --all-sweep-architectures
 
 # 8-3-26 multi-atlas integration
