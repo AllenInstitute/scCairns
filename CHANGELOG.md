@@ -7,6 +7,16 @@ All notable changes to **scCairns** are documented here. The format is based on
 ## [Unreleased]
 
 ### Added
+- Per-cluster **doublet score** panel in the inspection report
+  (`doublet_score_by_cluster.png`), rendered only when a per-cell `doublet_score` exists in
+  `obs`. Nothing is computed here — it plots whatever an upstream step produced
+  (DoubletFinder in R, `sc.pp.scrublet`, …). Because droplet-based callers leave a
+  plate-based arm unscored, **unscored cells are excluded rather than counted as zero**:
+  the title reports how many of the total were scored and names the scored platforms, and
+  each cluster's tick shows its scored `n`. An optional call column is overlaid as the
+  fraction called per cluster, accepting booleans, a 0/1 flag, or DoubletFinder's
+  `"Doublet"`/`"Singlet"` strings. Configured under `inspection.doublets`
+  (`score_key`, `call_key`, `platform_key`).
 - `sccairns.composition`: per-cluster compositional bias testing. `compositional_bias()`
   asks whether a cluster's platform/batch/donor makeup is what random assignment would
   give — hypergeometric, both tails (a missing platform is *depletion*, a dominating donor
@@ -52,7 +62,25 @@ All notable changes to **scCairns** are documented here. The format is based on
   could catch it without also flagging good clusters. Entropy is still reported, and is
   the right statistic for characterizing *which kind* of mixing a flagged cluster has.
 
+### Fixed
+- The cluster QC summary in `inspection_report.html` was rendered with
+  `summary_df.round(2)`, so every q-value below 0.005 displayed as `0.0` — a decisive
+  q = 6.8e-20 and a marginal q = 0.003 both read as zero. The table now uses per-column
+  formatters: `_q` columns keep scientific notation (`6.81e-20`), other floats get two
+  decimals, and an underflowed q renders as `<1e-300` rather than implying an exact zero.
+  Applied to the console table as well so the two agree. `cluster_qc_summary.csv` was
+  never affected — it is written from the unrounded frame.
+
 ### Documentation
+- [`archive/DOUBLET_DETECTION_ASSESSMENT.md`](archive/DOUBLET_DETECTION_ASSESSMENT.md) —
+  point-in-time feasibility review of adding Scrublet to the QC stage. **Not implemented:**
+  `sc.pp.scrublet` ships inside scanpy 1.10.4 (no `scrublet` package needed) but hard-fails
+  with `ModuleNotFoundError: No module named 'skimage'`, and `scikit-image` is pinned
+  nowhere. That is a one-line fix, so the blocker is design rather than environment: the
+  method assumes droplet co-encapsulation and this dataset mixes 10x Multiome with
+  plate-based SSv4. Records the batch-key, first-round-only, and score-don't-remove
+  decisions, and notes that `decisions.yaml` can already filter on `predicted_doublet`
+  with no new code.
 - [`archive/PIANO_INTEGRATION_ASSESSMENT.md`](archive/PIANO_INTEGRATION_ASSESSMENT.md) —
   point-in-time feasibility review of adding [PIANO](https://github.com/NingWang1729/piano)
   as an integration method. **Not implemented:** the code seam is ~1 day (Harmony is the
