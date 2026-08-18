@@ -124,7 +124,7 @@ embedding:
   n_neighbors: 30
   umap_min_dist: 0.4
   umap_spread: 3.0
-  leiden_resolution: 0.3
+  leiden_resolution: 0.8
 
 inspection:
   cluster_key: auto
