@@ -32,10 +32,26 @@ cairns() { python -m sccairns.cli "$@"; }
 #--all-sweep-architectures
 
 # 8/14/26 re-inspect after making some inspect changes
+#cairns inspect --config pipeline.yml \
+#--input /data/260807_cmg_int_round_02/rounds/round_02/integrated.h5ad \
+#--output-dir /root/capsule/results/rounds/round_02_inspect2 \
+#--all-sweep-architectures
+
+# re-run round_02, new settings to inspect and update the clustering resolution.
 cairns inspect --config pipeline.yml \
---input /data/260807_cmg_int_round_02/rounds/round_02/integrated.h5ad \
---output-dir /root/capsule/results/rounds/round_02_inspect2 \
+--input /data/cmg_integration_v3/round_01/integrated.h5ad \
+--decisions /data/cmg_integration_v3/round_01/inspect_Xlarge_geneXcell_cell_nb/decisions.yaml \
+--output-dir /root/capsule/results/rounds/round_02
+
+cairns integrate --config pipeline.yml \
+--input /root/capsule/results/rounds/round_02/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_02 
+
+cairns inspect --config pipeline.yml \
+--input /root/capsule/results/rounds/round_02/integrated.h5ad \
+--output-dir /root/capsule/results/rounds/round_02_inspect \
 --all-sweep-architectures
+
 
 # 8-3-26 multi-atlas integration
 #cairns integrate --config pipeline.yml
