@@ -38,18 +38,33 @@ cairns() { python -m sccairns.cli "$@"; }
 #--all-sweep-architectures
 
 # re-run round_02, new settings to inspect and update the clustering resolution.
+#cairns inspect --config pipeline.yml \
+#--input /data/cmg_integration_v3/round_01/integrated.h5ad \
+#--decisions /data/cmg_integration_v3/round_01/inspect_Xlarge_geneXcell_cell_nb/decisions.yaml \
+#--output-dir /root/capsule/results/rounds/round_02
+
+#cairns integrate --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_02/filtered.h5ad \
+#--output-dir /root/capsule/results/rounds/round_02 
+
+#cairns inspect --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_02/integrated.h5ad \
+#--output-dir /root/capsule/results/rounds/round_02_inspect \
+#--all-sweep-architectures
+
+# 8/20/26 Round 03 using conservative filters from round2 higher res (0.8 leiden res)
 cairns inspect --config pipeline.yml \
---input /data/cmg_integration_v3/round_01/integrated.h5ad \
---decisions /data/cmg_integration_v3/round_01/inspect_Xlarge_geneXcell_cell_nb/decisions.yaml \
---output-dir /root/capsule/results/rounds/round_02
+--input /data/260817_cmg_round_02_highres/rounds/round_02/integrated.h5ad \
+--decisions 260817_cmg_round_02_highres/rounds/round_02_inspect/inspect_harmony/decisions_round2_highres.yaml \
+--output-dir /root/capsule/results/rounds/round_03
 
 cairns integrate --config pipeline.yml \
---input /root/capsule/results/rounds/round_02/filtered.h5ad \
---output-dir /root/capsule/results/rounds/round_02 
+--input /root/capsule/results/rounds/round_03/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_03 
 
 cairns inspect --config pipeline.yml \
---input /root/capsule/results/rounds/round_02/integrated.h5ad \
---output-dir /root/capsule/results/rounds/round_02_inspect \
+--input /root/capsule/results/rounds/round_03/integrated.h5ad \
+--output-dir /root/capsule/results/rounds/round_03_inspect \
 --all-sweep-architectures
 
 
