@@ -55,7 +55,7 @@ cairns() { python -m sccairns.cli "$@"; }
 # 8/20/26 Round 03 using conservative filters from round2 higher res (0.8 leiden res)
 cairns inspect --config pipeline.yml \
 --input /data/260817_cmg_round_02_highres/rounds/round_02/integrated.h5ad \
---decisions 260817_cmg_round_02_highres/rounds/round_02_inspect/inspect_harmony/decisions_round2_highres.yaml \
+--decisions /data/260817_cmg_round_02_highres/rounds/round_02_inspect/inspect_harmony/decisions_round2_highres.yaml \
 --output-dir /root/capsule/results/rounds/round_03
 
 cairns integrate --config pipeline.yml \
