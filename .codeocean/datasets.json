@@ -88,6 +88,10 @@
 		{
 			"id": "f5177709-4645-48a0-821e-eb4de3eccc33",
 			"mount": "sns_all_int_260513"
+		},
+		{
+			"id": "f5d7172f-2649-4dc6-b079-ed6fc78d9aa5",
+			"mount": "260820_cmg_round_03"
 		}
 	]
 }
