@@ -53,20 +53,42 @@ cairns() { python -m sccairns.cli "$@"; }
 #--all-sweep-architectures
 
 # 8/20/26 Round 03 using conservative filters from round2 higher res (0.8 leiden res)
+#cairns inspect --config pipeline.yml \
+#--input /data/260817_cmg_round_02_highres/rounds/round_02/integrated.h5ad \
+#--decisions /data/260817_cmg_round_02_highres/rounds/round_02_inspect/inspect_harmony/decisions_round2_highres.yaml \
+#--output-dir /root/capsule/results/rounds/round_03
+
+#cairns integrate --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_03/filtered.h5ad \
+#--output-dir /root/capsule/results/rounds/round_03 
+
+#cairns inspect --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_03/integrated.h5ad \
+#--output-dir /root/capsule/results/rounds/round_03_inspect \
+#--all-sweep-architectures
+
+# 9-2-26 round 4. Remove cluster 2
 cairns inspect --config pipeline.yml \
---input /data/260817_cmg_round_02_highres/rounds/round_02/integrated.h5ad \
---decisions /data/260817_cmg_round_02_highres/rounds/round_02_inspect/inspect_harmony/decisions_round2_highres.yaml \
---output-dir /root/capsule/results/rounds/round_03
+--input /data/260820_cmg_round_03/rounds/round_03/integrated.h5ad \
+--decisions /data/260820_cmg_round_03/rounds/round_03_inspect/inspect_harmony/decisions_round3.yaml \
+--output-dir /root/capsule/results/rounds/round_04
 
 cairns integrate --config pipeline.yml \
---input /root/capsule/results/rounds/round_03/filtered.h5ad \
---output-dir /root/capsule/results/rounds/round_03 
+--input /root/capsule/results/rounds/round_04/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_04
 
 cairns inspect --config pipeline.yml \
---input /root/capsule/results/rounds/round_03/integrated.h5ad \
---output-dir /root/capsule/results/rounds/round_03_inspect \
+--input /root/capsule/results/rounds/round_04/integrated.h5ad \
+--output-dir /root/capsule/results/rounds/round_04_inspect \
 --all-sweep-architectures
 
+# summarize rounds
+
+cairns summarize \
+--rounds /data/cmg_integration_v3/round_01 /data/260817_cmg_round_02_highres/rounds/round_02 /data/260820_cmg_round_03/rounds/round_03 root/capsule/results/round_04 \
+--verify \
+--terminal-run-architecture "harmony" \
+--output-dir "/root/capsule/results/"
 
 # 8-3-26 multi-atlas integration
 #cairns integrate --config pipeline.yml
