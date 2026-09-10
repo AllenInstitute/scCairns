@@ -11,7 +11,7 @@ data:
   batch_key: tech
   categorical_covariate_keys: []
   continuous_covariate_keys: []
-  sample_key: null
+  sample_key: animal_id
   technology_key: tech
   species: mouse
   gene_symbol_case: preserve
@@ -124,7 +124,7 @@ embedding:
   n_neighbors: 30
   umap_min_dist: 0.4
   umap_spread: 3.0
-  leiden_resolution: 0.3
+  leiden_resolution: 0.8
 
 inspection:
   cluster_key: auto

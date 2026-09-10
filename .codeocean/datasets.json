@@ -6,12 +6,20 @@
 			"mount": "2607708_cmg_v2_round_03b_inspect_cells"
 		},
 		{
+			"id": "16485b44-2293-472c-928c-b2aaffe583ee",
+			"mount": "260817_cmg_round_02_highres"
+		},
+		{
 			"id": "1ce41721-3cf1-4065-a868-948778934f0e",
 			"mount": "260603_cmg_round2"
 		},
 		{
 			"id": "227eed6c-f3df-420f-85f0-a62d905ce3f6",
 			"mount": "260618_cmg_v2_round1"
+		},
+		{
+			"id": "4317350d-75e6-4eb2-9d75-22ec1948a572",
+			"mount": "260817_cmg_round_02_inspect"
 		},
 		{
 			"id": "460b7f25-174a-407c-afdb-483f9a72e7cd",
@@ -36,6 +44,10 @@
 		{
 			"id": "7137a5a3-b516-4283-98ed-f8f43e588b8f",
 			"mount": "cmg_integration_external_260728_h5ad"
+		},
+		{
+			"id": "838e9642-9064-4ce5-8d96-6d7638f75d86",
+			"mount": "20260910_cmg_int_ext_round1"
 		},
 		{
 			"id": "8c7ded55-7616-41c0-8da6-6d00ec438988",
@@ -74,12 +86,20 @@
 			"mount": "260622_cmg_v2_round3"
 		},
 		{
+			"id": "e24217f7-cb8c-4bdf-909a-ddb84deaa8ed",
+			"mount": "20260902_cmg_int_round_04"
+		},
+		{
 			"id": "f350e080-ba0b-4882-bc5e-daffa9c223aa",
 			"mount": "260617_cmg_round4"
 		},
 		{
 			"id": "f5177709-4645-48a0-821e-eb4de3eccc33",
 			"mount": "sns_all_int_260513"
+		},
+		{
+			"id": "f5d7172f-2649-4dc6-b079-ed6fc78d9aa5",
+			"mount": "260820_cmg_round_03"
 		}
 	]
 }
