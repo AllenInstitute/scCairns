@@ -68,32 +68,50 @@ cairns() { python -m sccairns.cli "$@"; }
 #--all-sweep-architectures
 
 # 9-2-26 round 4. Remove cluster 2
+#cairns inspect --config pipeline.yml \
+#--input /data/260820_cmg_round_03/rounds/round_03/integrated.h5ad \
+#--decisions /data/260820_cmg_round_03/rounds/round_03_inspect/inspect_harmony/decisions_round3.yaml \
+#--output-dir /root/capsule/results/rounds/round_04
+
+#cairns integrate --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_04/filtered.h5ad \
+#--output-dir /root/capsule/results/rounds/round_04
+
+#cairns inspect --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_04/integrated.h5ad \
+#--output-dir /root/capsule/results/rounds/round_04_inspect \
+#--all-sweep-architectures
+
+# 9-2-26 summarize rounds
+
+#cairns summarize \
+#--rounds /data/cmg_integration_v3/round_01 /data/260817_cmg_round_02_highres/rounds/round_02 /data/260820_cmg_round_03/rounds/round_03 /data/20260902_cmg_int_round_04/rounds/round_04 \
+#--verify \
+#--terminal-run-architecture "harmony" \
+#--output-dir "/root/capsule/results/"
+
+##################################
+# 9-9-26 multi-atlas integration
+##################################
+#cairns integrate --config pipeline.yml --input /data/cmg_integration_external_260728_h5ad/combined_cmg_260728.h5ad \
+#--output-dir /root/capsule/results/rounds/round_01
+
+#cairns inspect --config pipeline.yml --input ../results/rounds/round_01/integrated.h5ad --all-sweep-architectures
+
+# 9-10-26 Filter for neurons
 cairns inspect --config pipeline.yml \
---input /data/260820_cmg_round_03/rounds/round_03/integrated.h5ad \
---decisions /data/260820_cmg_round_03/rounds/round_03_inspect/inspect_harmony/decisions_round3.yaml \
---output-dir /root/capsule/results/rounds/round_04
+--input /data/20260910_cmg_int_ext_round1/rounds/round_01/integrated.h5ad \
+--decisions /data/20260910_cmg_int_ext_round1/rounds/round_01/inspect_large_geneXcell_cell_nb/20260910_round1_decisions.yaml \
+--output-dir /root/capsule/results/rounds/round_02
 
 cairns integrate --config pipeline.yml \
---input /root/capsule/results/rounds/round_04/filtered.h5ad \
---output-dir /root/capsule/results/rounds/round_04
+--input /root/capsule/results/rounds/round_02/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_02
 
 cairns inspect --config pipeline.yml \
---input /root/capsule/results/rounds/round_04/integrated.h5ad \
---output-dir /root/capsule/results/rounds/round_04_inspect \
+--input /root/capsule/results/rounds/round_02/integrated.h5ad \
 --all-sweep-architectures
 
-# summarize rounds
-
-cairns summarize \
---rounds /data/cmg_integration_v3/round_01 /data/260817_cmg_round_02_highres/rounds/round_02 /data/260820_cmg_round_03/rounds/round_03 root/capsule/results/round_04 \
---verify \
---terminal-run-architecture "harmony" \
---output-dir "/root/capsule/results/"
-
-# 8-3-26 multi-atlas integration
-#cairns integrate --config pipeline.yml
-
-#cairns inspect --config pipeline.yml --input ../results/rounds/round_01/integrated.h5ad
 
 # 8-5-26 filter and re-integrate
 
