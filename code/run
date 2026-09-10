@@ -99,18 +99,35 @@ cairns() { python -m sccairns.cli "$@"; }
 #cairns inspect --config pipeline.yml --input ../results/rounds/round_01/integrated.h5ad --all-sweep-architectures
 
 # 9-10-26 Filter for neurons
+#cairns inspect --config pipeline.yml \
+#--input /data/20260910_cmg_int_ext_round1/rounds/round_01/integrated.h5ad \
+#--decisions /data/20260910_cmg_int_ext_round1/rounds/round_01/inspect_large_geneXcell_cell_nb/20260910_round1_decisions.yaml \
+#--output-dir /root/capsule/results/rounds/round_02
+
+#cairns integrate --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_02/filtered.h5ad \
+#--output-dir /root/capsule/results/rounds/round_02
+
+#cairns inspect --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_02/integrated.h5ad \
+#--all-sweep-architectures
+
+# 9-10-26 third round: filter neurons again
+# note that I called the inspect in this round2 directory round1 by mistake ##
 cairns inspect --config pipeline.yml \
---input /data/20260910_cmg_int_ext_round1/rounds/round_01/integrated.h5ad \
---decisions /data/20260910_cmg_int_ext_round1/rounds/round_01/inspect_large_geneXcell_cell_nb/20260910_round1_decisions.yaml \
---output-dir /root/capsule/results/rounds/round_02
+--input /data/20260910_cmg_int_ext_round2/rounds/round_02/integrated.h5ad \
+--decisions /data/20260910_cmg_int_ext_round2/rounds/round_01/inspect_large_geneXcell_cell_nb/20260910_round2_decisions.yaml \
+--output-dir /root/capsule/results/rounds/round_03
 
 cairns integrate --config pipeline.yml \
---input /root/capsule/results/rounds/round_02/filtered.h5ad \
---output-dir /root/capsule/results/rounds/round_02
+--input /root/capsule/results/rounds/round_03/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_03
 
 cairns inspect --config pipeline.yml \
---input /root/capsule/results/rounds/round_02/integrated.h5ad \
+--input /root/capsule/results/rounds/round_03/integrated.h5ad \
+--output-dir /root/capsule/results/rounds/round_03 \
 --all-sweep-architectures
+
 
 
 # 8-5-26 filter and re-integrate
