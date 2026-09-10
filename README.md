@@ -9,7 +9,7 @@ repeating until the data is clean. Every round records its seed, code commit, an
 fingerprint, so the whole lineage is reproducible. Like a trail of cairns, each round
 leaves a marker you can retrace.
 
-<img src="https://github.com/AllenInstitute/scCairns/blob/76c86ec87870c60c2b2f62bc5fce6695350eb17e/docs/assets/cairns_minimal_systems_diagram.pdf" alt="system diagram" width="420">
+<img src="https://github.com/AllenInstitute/scCairns/blob/1b5250e60f7211ec0b00204557c546bce2826732/docs/assets/cairns_minimal_systems_diagram.png" alt="system diagram" width="420">
 
 ```text
 per round:     integrate → inspect → edit decisions → filter → re-integrate
