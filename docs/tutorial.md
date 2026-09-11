@@ -29,6 +29,9 @@ The tutorial config `examples/pipeline_tutorial.yml` already points at this file
 uses a small, fast scVI architecture. (It resolves `input_h5ad` relative to itself,
 so the paths just work.)
 
+*If you are running the tutorial on CodeOcean, you will need to save the `combined_example.h5ad` to 
+somewhere accessible to the pipeline, such as ./data or ./code.
+
 ## Step 1 — Integrate (round 1)
 
 ```bash
@@ -40,6 +43,12 @@ Outputs land in `examples/tutorial_run/rounds/round_01/`. The key file is
 embedding in `obsm["X_scVI"]`, a UMAP, and Leiden clusters in `obs["leiden"]`).
 Alongside it: `run_config_resolved.yml`, `round_manifest.json` (seed, git commit,
 input fingerprint), `scib_benchmark_results.csv`, and QC plots.
+
+*If you are running the tutorial on CodeOcean, it writes outputs to `/root/capsule/results`. 
+You will need to adjust the output location either 
+within the `pipeline_tutorial.yaml` file (e.g., 
+`output_dir: /root/capsule/results/tutorial_run/rounds/round_01`), or provide
+the directory in the `cairns integrate` call with the command `--output-dir`
 
 ## Step 2 — Inspect (round 1)
 
