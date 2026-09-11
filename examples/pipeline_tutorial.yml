@@ -10,8 +10,10 @@ reproducibility:
 data:
   # Written by: python examples/make_example_data.py
   # Path is resolved relative to THIS config file's location.
+  # Note that in CodeOcean the input needs to be in /data /code
+  # Note that in CodeOcean the output should write to /results 
   input_h5ad: example_data/combined_example.h5ad
-  output_dir: tutorial_run/rounds/round_01
+  output_dir: ../results/tutorial_run/rounds/round_01
   counts_layer: counts
   batch_key: data_origin          # the biological/sample batch to integrate over
   categorical_covariate_keys: [tech]   # extra nuisance covariate(s)
