@@ -627,8 +627,16 @@ def _normalise_neighbor_graph_metadata(adata, neighbors_key):
     adata.uns[neighbors_key] = neighbors
 
 
-def run_neighbors_with_key(adata, neighbors_key, **kwargs):
-    """Run neighbors and keep named graph metadata consistent across versions."""
+def run_neighbors_with_key(adata, neighbors_key, seed=None, **kwargs):
+    """Run neighbors and keep named graph metadata consistent across versions.
+
+    ``seed`` is threaded into Scanpy's ``random_state`` so the configured
+    ``reproducibility.seed`` governs the graph rather than Scanpy's implicit
+    default. ``None`` normalizes to 0 — same convention as ``run_harmony`` — so
+    an unseeded run is still deterministic here, and the manifest's recorded
+    seed fully describes this step.
+    """
+    kwargs.setdefault("random_state", seed if seed is not None else 0)
     try:
         sc.pp.neighbors(adata, key_added=neighbors_key, **kwargs)
         _normalise_neighbor_graph_metadata(adata, neighbors_key)
@@ -677,14 +685,20 @@ def run_neighbors_with_key(adata, neighbors_key, **kwargs):
     _restore_mapping_key(adata.obsp, "distances", prior_distances)
 
 
-def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
+def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5,
+                      seed=None):
     """Run UMAP with a requested obsm key across Scanpy versions.
 
     Newer Scanpy versions support sc.tl.umap(..., key_added=...). Some older
     versions always write obsm["X_umap"]. This wrapper tries key_added first,
     then falls back to copying/restoring X_umap so multiple embeddings can
     coexist safely.
+
+    ``seed`` is threaded into ``random_state`` on both the primary and fallback
+    paths (``None`` -> 0), so the layout does not depend on which path a given
+    Scanpy version takes.
     """
+    random_state = seed if seed is not None else 0
     try:
         sc.tl.umap(
             adata,
@@ -692,6 +706,7 @@ def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
             key_added=umap_key,
             spread=spread,
             min_dist=min_dist,
+            random_state=random_state,
         )
         return
     except TypeError as e:
@@ -741,6 +756,7 @@ def run_umap_with_key(adata, neighbors_key, umap_key, spread=1.0, min_dist=0.5):
             adata,
             spread=spread,
             min_dist=min_dist,
+            random_state=random_state,
         )
     finally:
         _restore_mapping_key(adata.uns, "neighbors", prior_neighbors)
@@ -801,8 +817,15 @@ def run_leiden_with_key(
     leiden_key,
     resolution=1.0,
     flavor="igraph",
+    seed=None,
 ):
-    """Run Leiden using a named neighbors graph across Scanpy versions."""
+    """Run Leiden using a named neighbors graph across Scanpy versions.
+
+    ``seed`` is threaded into ``random_state`` (``None`` -> 0). This matters
+    more than for the other steps: Leiden cluster IDs are what decisions.yaml
+    files reference by number, so the recorded seed must describe them.
+    """
+    random_state = seed if seed is not None else 0
     try:
         _call_leiden(
             adata,
@@ -810,6 +833,7 @@ def run_leiden_with_key(
             resolution=resolution,
             flavor=flavor,
             leiden_key=leiden_key,
+            random_state=random_state,
         )
         return
     except (KeyError, TypeError, ValueError) as e:
@@ -834,6 +858,7 @@ def run_leiden_with_key(
         resolution=resolution,
         flavor=flavor,
         leiden_key=leiden_key,
+        random_state=random_state,
     )
 
 
@@ -873,7 +898,7 @@ def _supported_metric_kwargs(cls, desired, aliases=None, name=None):
 
 def run_benchmarking(adata, embedding_keys, bench_batch_key,
                      bench_label_key=None, output_dir=None, n_pca_comps=50,
-                     counts_layer="counts"):
+                     counts_layer="counts", seed=None):
     """Run scIB benchmarking across embedding keys.
 
     Parameters
@@ -882,6 +907,10 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
         If None, only batch-correction metrics are computed and a leiden proxy
         is generated internally so the Benchmarker constructor is satisfied.
         If provided, a subset of bio-conservation metrics is also enabled.
+    seed : int or None
+        Threaded into the PCA baseline and the leiden proxy (``None`` -> 0).
+        Both feed the reported metrics, so the recorded seed has to cover them
+        for scib_benchmark_results.csv to be reproducible from the manifest.
     """
     try:
         from scib_metrics.benchmark import (Benchmarker, BatchCorrection,
@@ -898,7 +927,8 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
         adata_tmp.X = adata_tmp.layers[counts_layer].copy()
         sc.pp.normalize_total(adata_tmp)
         sc.pp.log1p(adata_tmp)
-        sc.pp.pca(adata_tmp, n_comps=n_pca_comps)
+        sc.pp.pca(adata_tmp, n_comps=n_pca_comps,
+                  random_state=seed if seed is not None else 0)
         adata.obsm["X_pca"] = adata_tmp.obsm["X_pca"]
         del adata_tmp; gc.collect()
 
@@ -913,13 +943,15 @@ def run_benchmarking(adata, embedding_keys, bench_batch_key,
                   f"leiden proxy.")
         # Generate a proxy so the Benchmarker constructor doesn't error
         if "leiden_proxy" not in adata.obs.columns:
-            run_neighbors_with_key(adata, "_proxy_neighbors", use_rep="X_pca")
+            run_neighbors_with_key(adata, "_proxy_neighbors", use_rep="X_pca",
+                                   seed=seed)
             run_leiden_with_key(
                 adata,
                 neighbors_key="_proxy_neighbors",
                 leiden_key="leiden_proxy",
                 resolution=0.5,
                 flavor="igraph",
+                seed=seed,
             )
         label_key = "leiden_proxy"
         use_bio = False
@@ -1640,6 +1672,7 @@ Sweep config JSON format:
             use_rep=latent_key,
             n_neighbors=embedding_cfg["n_neighbors"],
             n_pcs=n_latent,
+            seed=applied_seed,
         )
         run_umap_with_key(
             adata_full,
@@ -1647,6 +1680,7 @@ Sweep config JSON format:
             umap_key=umap_key,
             spread=embedding_cfg["umap_spread"],
             min_dist=embedding_cfg["umap_min_dist"],
+            seed=applied_seed,
         )
         run_leiden_with_key(
             adata_full,
@@ -1654,6 +1688,7 @@ Sweep config JSON format:
             leiden_key=leiden_key,
             resolution=embedding_cfg["leiden_resolution"],
             flavor="igraph",
+            seed=applied_seed,
         )
 
         umap_keys[name] = umap_key
@@ -1699,6 +1734,7 @@ Sweep config JSON format:
             bench_label_key=benchmark_cfg.get("label_key"),
             output_dir=output_dir,
             counts_layer=counts_layer,
+            seed=applied_seed,
         )
     else:
         print("\n  Skipping scIB benchmarking.")
