@@ -48,8 +48,6 @@ integration:
       n_latent: 10
       dispersion: gene-cell
       gene_likelihood: zinb
-      batch_key: tech
-      categorical_covariate_keys: []
     
     - name: small_geneXbatch_zinb
       n_hidden: 64
@@ -57,8 +55,6 @@ integration:
       n_latent: 10
       dispersion: gene-batch
       gene_likelihood: zinb
-      batch_key: tech
-      categorical_covariate_keys: []
 
     - name: small_gene_nb
       n_hidden: 64
@@ -66,8 +62,6 @@ integration:
       n_latent: 10
       dispersion: gene
       gene_likelihood: nb
-      batch_key: tech
-      categorical_covariate_keys: []
 
     - name: small_geneXcell_nb
       n_hidden: 64
@@ -75,8 +69,6 @@ integration:
       n_latent: 10
       dispersion: gene-cell
       gene_likelihood: nb
-      batch_key: tech
-      categorical_covariate_keys: []
    
     - name: medium_geneXcell_nb
       n_hidden: 80
@@ -84,8 +76,6 @@ integration:
       n_latent: 24
       dispersion: gene-cell
       gene_likelihood: nb
-      batch_key: tech
-      categorical_covariate_keys: []
     
     - name: large_geneXcell_cell_nb
       n_hidden: 128
@@ -93,8 +83,6 @@ integration:
       n_latent: 24
       dispersion: gene-cell
       gene_likelihood: nb
-      batch_key: tech
-      categorical_covariate_keys: []
 
     - name: Xlarge_geneXcell_cell_nb
       n_hidden: 128
@@ -102,8 +90,6 @@ integration:
       n_latent: 32
       dispersion: gene-cell
       gene_likelihood: nb
-      batch_key: tech
-      categorical_covariate_keys: []
   harmony:
     enabled: true       # run Harmony alongside scVI (single-model or sweep)
     batch_key: null      # defaults to data.batch_key when null

@@ -288,19 +288,25 @@ def flag_by_cluster(adata, flag_df: pd.DataFrame,
 #  CLI (optional)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-if __name__ == "__main__":
+def build_parser() -> "argparse.ArgumentParser":
     import argparse
-    import scanpy as sc
 
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--input", required=True, help="path to integrated h5ad")
-    ap.add_argument("--output", required=True, help="output CSV of per-cell flags")
-    ap.add_argument("--cluster-key", default="cl.res.0.6",
-                    help="obs column for cluster-vs-flag cross-tab (optional)")
-    ap.add_argument("--z-thresh", type=float, default=2.0)
-    ap.add_argument("--min-genes", type=int, default=2)
-    ap.add_argument("--layer", default=None)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--input", required=True, help="path to integrated h5ad")
+    parser.add_argument("--output", required=True, help="output CSV of per-cell flags")
+    parser.add_argument("--cluster-key", default="cl.res.0.6",
+                        help="obs column for cluster-vs-flag cross-tab (optional)")
+    parser.add_argument("--z-thresh", type=float, default=2.0)
+    parser.add_argument("--min-genes", type=int, default=2)
+    parser.add_argument("--layer", default=None)
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    import scanpy as sc  # local: keeps `cairns --help` cheap
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
 
     adata = sc.read_h5ad(args.input)
     flags = flag_contamination(adata, z_thresh=args.z_thresh,
@@ -309,3 +315,8 @@ if __name__ == "__main__":
     if args.cluster_key in adata.obs.columns:
         print("\nFlag rate by cluster:")
         print(flag_by_cluster(adata, flags, cluster_key=args.cluster_key))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
