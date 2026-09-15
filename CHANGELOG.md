@@ -6,6 +6,14 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-09-15
+
+Diagnostics and reproducibility release. Adds three cluster-level diagnostic
+families — doublet scoring, neighborhood entropy/purity, and compositional bias
+testing — and closes the gap between what `reproducibility.seed` recorded and
+what it actually governed. Upgrading changes UMAP/Leiden output for any config
+with a seed other than 0; see the seed entry under **Fixed**.
+
 ### Added
 - Per-cluster **doublet score** panel in the inspection report
   (`doublet_score_by_cluster.png`), rendered only when a per-cell `doublet_score` exists in
@@ -70,6 +78,34 @@ All notable changes to **scCairns** are documented here. The format is based on
   decimals, and an underflowed q renders as `<1e-300` rather than implying an exact zero.
   Applied to the console table as well so the two agree. `cluster_qc_summary.csv` was
   never affected — it is written from the unrounded frame.
+- `reproducibility.seed` now governs **every** stochastic step, not just model
+  training. `set_global_seed()` seeded scvi-tools (and therefore scVI/scANVI), but the
+  neighbor-graph, UMAP, and Leiden wrappers called Scanpy without `random_state`, so
+  they silently ran on Scanpy's implicit default of 0 regardless of the config:
+  `seed: 42` changed the latent space and left UMAP/Leiden on 0. The seed is now
+  threaded into all three wrappers — on their older-Scanpy fallback paths as well as
+  the primary ones, since which path executes depends on the installed Scanpy version
+  and an unseeded fallback would reintroduce the gap invisibly — and into the
+  benchmarking stage's PCA baseline and Leiden proxy label, both of which feed
+  `scib_benchmark_results.csv`. `seed: null` normalizes to 0 throughout, matching the
+  convention `run_harmony` already used, so an unseeded run stays deterministic here.
+
+  Leiden is why this mattered: cluster IDs are what `decisions.yaml` files reference
+  by number, so a manifest recording `seed: 42` did not describe the RNG state that
+  produced the IDs its own decisions cite. **This changes output** for any config with
+  a seed other than 0 — UMAP coordinates and Leiden labels differ from pre-0.2.0
+  rounds, so a `decisions.yaml` written against the old cluster numbering should be
+  re-checked against a fresh inspection report before it is reapplied.
+- `cairns flag-contamination` raised `AttributeError` instead of running. The CLI
+  dispatcher calls `module.main()`, but `contamination.py` defined its argparse only
+  under `if __name__ == "__main__"`, so the subcommand had never worked since the
+  package was introduced in 0.1.0. Refactored into a module-level `build_parser()` +
+  `main(argv)` matching `record_filter`. No round record was affected: the
+  functionality itself was never unavailable, because contamination flagging runs
+  automatically inside `cairns inspect` report mode (`contamination_zscore.csv`,
+  `contamination_flagged_cells.csv`). The existing CLI test only asserted that command
+  names appeared in the usage string, which is why this went unnoticed — every command
+  in `COMMANDS` is now asserted to export a callable `main()`.
 
 ### Documentation
 - [`archive/DOUBLET_DETECTION_ASSESSMENT.md`](archive/DOUBLET_DETECTION_ASSESSMENT.md) —
@@ -267,5 +303,6 @@ Changes before the project was packaged and renamed (dates approximate, from git
   validation, resolved-config persistence, and the
   `integrate → inspect → decide → filter → re-integrate` loop with scVI/scANVI.
 
-[Unreleased]: https://github.com/AllenInstitute/scCairns/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/AllenInstitute/scCairns/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/AllenInstitute/scCairns/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AllenInstitute/scCairns/releases/tag/v0.1.0
