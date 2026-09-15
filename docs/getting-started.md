@@ -29,7 +29,7 @@ scCairns itself.
 mamba create -n myproject -c conda-forge python=3.10 pip scikit-misc -y
 mamba activate myproject
 python -m pip install -U pip
-python -m pip install "git+https://github.com/AllenInstitute/scCairns.git@v0.1.0"
+python -m pip install "git+https://github.com/AllenInstitute/scCairns.git@v0.2.0"
 ```
 
 **Always pin an exact tag.** Installing from `@main` means a later rebuild of the same
@@ -42,7 +42,7 @@ credential helper or a PAT for the HTTPS form above, or SSH if that's how you
 authenticate:
 
 ```bash
-python -m pip install "git+ssh://git@github.com/AllenInstitute/scCairns.git@v0.1.0"
+python -m pip install "git+ssh://git@github.com/AllenInstitute/scCairns.git@v0.2.0"
 ```
 
 One caveat: the package's own dependencies are deliberately **unpinned** in
@@ -53,7 +53,7 @@ checkout of the same tag — and then the package:
 
 ```bash
 python -m pip install -r requirements.txt   # pinned scientific stack (scanpy, scvi-tools, …)
-python -m pip install "git+https://github.com/AllenInstitute/scCairns.git@v0.1.0"
+python -m pip install "git+https://github.com/AllenInstitute/scCairns.git@v0.2.0"
 ```
 
 For Code Ocean, the install belongs in the capsule's **`postInstall`**, not in `run` —
@@ -81,7 +81,7 @@ The `code/*.py` scripts remain as backward-compat shims for the Code Ocean capsu
 Harmony is an **optional** integration path, so `harmonypy` is not a core dependency
 of the package. It is pinned in `requirements.txt` (`harmonypy==0.0.10`), and you can
 also install it via the extra: `python -m pip install -e '.[harmony]'` (from a clone) or
-`python -m pip install "scCairns[harmony] @ git+https://github.com/AllenInstitute/scCairns.git@v0.1.0"`.
+`python -m pip install "scCairns[harmony] @ git+https://github.com/AllenInstitute/scCairns.git@v0.2.0"`.
 Only needed if you enable the optional
 [Harmony comparison](configuration.md#harmony-optional); everything else works without
 it. (Note: `harmonypy` 2.x is incompatible — the extra caps it `<1`.)

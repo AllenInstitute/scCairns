@@ -39,7 +39,7 @@ its own `pipeline.yml`, `run`, and `.codeocean/datasets.json`, and scCairns come
 the image. Put the install in the capsule's **`postInstall`**:
 
 ```bash
-pip install --no-cache-dir "git+https://github.com/AllenInstitute/scCairns.git@v0.1.0"
+pip install --no-cache-dir "git+https://github.com/AllenInstitute/scCairns.git@v0.2.0"
 ```
 
 Then `run` needs no preamble at all — pip puts a real `cairns` on PATH.
