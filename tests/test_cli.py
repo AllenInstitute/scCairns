@@ -1,5 +1,9 @@
 """Dispatcher-level behavior of the ``cairns`` command."""
 
+import importlib
+
+import pytest
+
 from sccairns import cli
 
 
@@ -8,6 +12,21 @@ def test_help_lists_every_command(capsys):
     usage = capsys.readouterr().out
     for command in cli.COMMANDS:
         assert command in usage
+
+
+@pytest.mark.parametrize("command", sorted(cli.COMMANDS))
+def test_every_command_dispatches_to_a_module_main(command):
+    """The dispatcher calls ``module.main()``, so every target must export one.
+
+    Listing a command in COMMANDS and in the usage text is not enough: a module
+    whose argparse lives only under ``if __name__ == "__main__"`` imports fine
+    and prints in --help, then raises AttributeError when actually invoked.
+    """
+    module = importlib.import_module(cli.COMMANDS[command])
+    assert callable(getattr(module, "main", None)), (
+        f"{cli.COMMANDS[command]} has no module-level main(); "
+        f"'cairns {command}' would fail at dispatch"
+    )
 
 
 def test_unknown_command_is_an_error(capsys):

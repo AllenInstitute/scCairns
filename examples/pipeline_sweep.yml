@@ -21,6 +21,11 @@ integration:
     batch_key: tech
     flavor: seurat_v3
     min_batches: null
+  # Each entry below overrides batch_key/categorical_covariate_keys on purpose, to
+  # sweep the batch-correction strategy itself alongside model size. Omitting either
+  # key from an entry falls through to the matching data.* value above instead
+  # (present-but-empty, e.g. `categorical_covariate_keys: []`, does NOT fall through
+  # — it's used as-is).
   sweep:
     - name: custom2_tech
       n_hidden: 16
