@@ -90,6 +90,22 @@ cairns() { python -m sccairns.cli "$@"; }
 #--terminal-run-architecture "harmony" \
 #--output-dir "/root/capsule/results/"
 
+# 9-22-26 go back to round 03 and re-do filter, keeping cluster 8
+
+cairns inspect --config pipeline.yml \
+--input /data/260817_cmg_round_02_highres/rounds/round_02/integrated.h5ad \
+--decisions /data/260817_cmg_round_02_highres/rounds/round_02_inspect/inspect_harmony/decisions_round2_highres_include_cl8.yaml \
+--output-dir /root/capsule/results/rounds/round_03
+
+cairns integrate --config pipeline.yml \
+--input /root/capsule/results/rounds/round_03/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_03 
+
+cairns inspect --config pipeline.yml \
+--input /root/capsule/results/rounds/round_03/integrated.h5ad \
+--output-dir /root/capsule/results/rounds/round_03_inspect \
+--all-sweep-architectures
+
 ##################################
 # 9-9-26 multi-atlas integration
 ##################################
@@ -129,9 +145,10 @@ cairns() { python -m sccairns.cli "$@"; }
 #--all-sweep-architectures
 
 # 9-14-26 re-run round01 inspect
-cairns inspect --config pipeline.yml --input /data/20260910_cmg_int_ext_round1/rounds/round_01/integrated.h5ad \
---all-sweep-architectures \
---output-dir /root/capsule/results/rounds/round_01_inspect
+#cairns inspect --config pipeline.yml --input /data/20260910_cmg_int_ext_round1/rounds/round_01/integrated.h5ad \
+#--all-sweep-architectures \
+#--output-dir /root/capsule/results/rounds/round_01_inspect
+##^ stopped here for multi-atlas integration #9/22/26
 
 # 8-5-26 filter and re-integrate
 
