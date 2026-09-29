@@ -92,19 +92,35 @@ cairns() { python -m sccairns.cli "$@"; }
 
 # 9-22-26 go back to round 03 and re-do filter, keeping cluster 8
 
+#cairns inspect --config pipeline.yml \
+#--input /data/260817_cmg_round_02_highres/rounds/round_02/integrated.h5ad \
+#--decisions /data/260817_cmg_round_02_highres/rounds/round_02_inspect/inspect_harmony/decisions_round2_highres_include_cl8.yaml \
+#--output-dir /root/capsule/results/rounds/round_03
+
+#cairns integrate --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_03/filtered.h5ad \
+#--output-dir /root/capsule/results/rounds/round_03 
+
+#cairns inspect --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_03/integrated.h5ad \
+#--output-dir /root/capsule/results/rounds/round_03_inspect \
+#--all-sweep-architectures
+
+# 9-29-26 remove cluster 2 (high stress signature)
 cairns inspect --config pipeline.yml \
---input /data/260817_cmg_round_02_highres/rounds/round_02/integrated.h5ad \
---decisions /data/260817_cmg_round_02_highres/rounds/round_02_inspect/inspect_harmony/decisions_round2_highres_include_cl8.yaml \
---output-dir /root/capsule/results/rounds/round_03
+--input /data/20260921_cmg_int_round3_v2/rounds/round_03/integrated.h5ad \
+--decisions /data/20260921_cmg_int_round3_v2/rounds/round_03_inspect/inspect_harmony/round3_cmg_decisions.yaml \
+--output-dir /root/capsule/results/rounds/round_04_v2
 
 cairns integrate --config pipeline.yml \
---input /root/capsule/results/rounds/round_03/filtered.h5ad \
---output-dir /root/capsule/results/rounds/round_03 
+--input /root/capsule/results/rounds/round_04_v2/filtered.h5ad \
+--output-dir /root/capsule/results/rounds/round_04_v2 
 
 cairns inspect --config pipeline.yml \
---input /root/capsule/results/rounds/round_03/integrated.h5ad \
---output-dir /root/capsule/results/rounds/round_03_inspect \
+--input /root/capsule/results/rounds/round_04_v2/integrated.h5ad \
+--output-dir /root/capsule/results/rounds/round_04_v2_inspect \
 --all-sweep-architectures
+
 
 ##################################
 # 9-9-26 multi-atlas integration
