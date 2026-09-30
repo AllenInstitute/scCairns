@@ -46,6 +46,10 @@
 			"mount": "260603_CMG_untreated_unint"
 		},
 		{
+			"id": "6c8f483c-6391-4907-89ce-015f330ed03d",
+			"mount": "260929_cmg_int_v3_round03_v2"
+		},
+		{
 			"id": "7137a5a3-b516-4283-98ed-f8f43e588b8f",
 			"mount": "cmg_integration_external_260728_h5ad"
 		},
