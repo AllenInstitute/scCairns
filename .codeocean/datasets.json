@@ -54,6 +54,10 @@
 			"mount": "cmg_integration_external_260728_h5ad"
 		},
 		{
+			"id": "72ac02fa-6e88-4598-a2e0-abf007daff97",
+			"mount": "260929_cmg_int_v3_round04_v2"
+		},
+		{
 			"id": "79c3dcda-5e3d-4c03-baaf-8c17b8ec2e47",
 			"mount": "20260921_cmg_int_round3_v2"
 		},
@@ -90,8 +94,16 @@
 			"mount": "20260910_cmg_int_ext_round2"
 		},
 		{
+			"id": "c8ac215f-03ad-4f68-afd9-3056e8b3a783",
+			"mount": "260930_cmg_int_v3_round04_v2"
+		},
+		{
 			"id": "c9b4b71b-00cd-4ff9-8b8a-a947cb6209db",
 			"mount": "260723_cmg_v2_round_summary"
+		},
+		{
+			"id": "cedb0a2a-9d7c-4ad9-994f-4db1fb260fec",
+			"mount": "20260930_cmg_int_round04_topometry_adata"
 		},
 		{
 			"id": "d5221e1d-e52f-4508-b531-a48246b6b0c1",
