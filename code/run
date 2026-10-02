@@ -107,20 +107,29 @@ cairns() { python -m sccairns.cli "$@"; }
 #--all-sweep-architectures
 
 # 9-29-26 remove cluster 2 (high stress signature)
-cairns inspect --config pipeline.yml \
---input /data/20260921_cmg_int_round3_v2/rounds/round_03/integrated.h5ad \
---decisions /data/20260921_cmg_int_round3_v2/rounds/round_03_inspect/inspect_harmony/round3_cmg_decisions.yaml \
---output-dir /root/capsule/results/rounds/round_04_v2
+#cairns inspect --config pipeline.yml \
+#--input /data/20260921_cmg_int_round3_v2/rounds/round_03/integrated.h5ad \
+#--decisions /data/20260921_cmg_int_round3_v2/rounds/round_03_inspect/inspect_harmony/round3_cmg_decisions.yaml \
+#--output-dir /root/capsule/results/rounds/round_04_v2
 
-cairns integrate --config pipeline.yml \
---input /root/capsule/results/rounds/round_04_v2/filtered.h5ad \
---output-dir /root/capsule/results/rounds/round_04_v2 
+#cairns integrate --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_04_v2/filtered.h5ad \
+#--output-dir /root/capsule/results/rounds/round_04_v2 
 
-cairns inspect --config pipeline.yml \
---input /root/capsule/results/rounds/round_04_v2/integrated.h5ad \
---output-dir /root/capsule/results/rounds/round_04_v2_inspect \
---all-sweep-architectures
+#cairns inspect --config pipeline.yml \
+#--input /root/capsule/results/rounds/round_04_v2/integrated.h5ad \
+#--output-dir /root/capsule/results/rounds/round_04_v2_inspect \
+#--all-sweep-architectures
 
+# 10-2-26 performed filtering off pipeline with topometry in topometry capsule
+# https://codeocean.allenneuraldynamics.org/capsule/2697293/tree @ /code/topometry_test.ipynb Commit 008f8c0
+cairns record-filter \
+--input-h5ad /data/cmg_integration_v3/round_04_v2/round_04_v2/integrated.h5ad \
+--output-h5ad /data/cmg_integration_v3/round_05_v2/topometry_subset/cmg_topometry_sub_261002.h5ad \
+--output-dir root/capsule/results/rounds/round_05 \
+--embedding-key X_TopoMAP_int_sub \
+--filter-used "Removed stress-associated cluster (Hsp, Aldoa, etc) with adata_sub = adata[adata.obs['topo_clusters_ms_int']!='5']" \
+--notes "Manual filtering of clustering based on topometry clusters and integration. Commit 008f8c0"
 
 ##################################
 # 9-9-26 multi-atlas integration
