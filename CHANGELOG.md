@@ -3,6 +3,42 @@
 All notable changes to **scCairns** are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Added
+- `sccairns.stress`: heat-shock / dissociation-stress module scoring, surfaced in the
+  inspection report as `stress_score_by_cluster.png` and as a `median_stress` column in
+  `cluster_qc_summary.csv`. A cluster defined by Hspa1a/Hspb1/Hsp90aa1 is usually an
+  artifact of how long the tissue sat in protease rather than a cell type, and nothing
+  in the report made that visible before. Configured under `inspection.stress`
+  (`enabled`, `gene_prefixes`, `genes`, `z_thresh`, `layer`, `score_key`).
+
+  **Heat-shock only, deliberately.** Mitochondrial burden — the other half of the usual
+  "stress" bundle — is already covered end to end by `pct_counts_mt` → `median_pct_mt` →
+  `auto_flag.mt_threshold`, so scoring it again would produce two differently-scaled
+  numbers that can disagree about the same cluster. The panel is meant to be read
+  *alongside* `median_pct_mt`, and the plot says so. Immediate-early genes (Fos, Jun,
+  Egr1) are likewise excluded by default: in neurons they are genuine activity markers,
+  so scoring them as stress would penalize real biology — add them via `gene_prefixes`
+  where the tissue makes that unambiguous.
+
+  The panel is resolved by **prefix** against `var_names` at run time rather than listed
+  gene by gene, because HSP families are large and the informative member varies by
+  dataset; the same default therefore covers mouse (`Hspa1a`) and human (`HSPA1A`)
+  without restating it, which matters because `gene_symbol_case: preserve` means neither
+  convention can be assumed. Resolution is `sorted()`, not `set()`-ordered — Python
+  randomizes string hashing per process, so a set would make the recorded panel differ
+  run to run.
+
+  Scoring reuses `contamination.score_panel` (the same per-gene z-score path), so the
+  two are read on one scale, but the stress panel is kept out of `DEFAULT_CONTAM_PANELS`
+  on purpose: contamination panels feed `flag_any_contam` and therefore
+  `contamination_flagged_cells.csv`, and a stressed cell is a "drop this cluster" call,
+  not a wrong-lineage call. Scoring runs before `cluster_qc_summary()` so the column
+  actually reaches the CSV — contamination runs after it, which is why no contamination
+  column appears there.
+
 ## [0.2.0] — 2026-09-15
 
 Diagnostics and reproducibility release. Adds three cluster-level diagnostic

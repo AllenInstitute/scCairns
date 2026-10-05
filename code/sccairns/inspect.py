@@ -264,7 +264,10 @@ def cluster_qc_summary(adata, cluster_key="leiden", batch_key="data_origin",
                            ("total_counts", "median_counts"),
                            ("pct_counts_mt", "median_pct_mt"),
                            ("pct_counts_ribo", "median_pct_ribo"),
-                           ("pct_counts_hb", "median_pct_hb")]:
+                           ("pct_counts_hb", "median_pct_hb"),
+                           # Present only when inspection.stress ran; read it
+                           # next to median_pct_mt, not instead of it.
+                           ("stress_score", "median_stress")]:
             if col in sub.columns:
                 row[label] = float(sub[col].median())
 
@@ -1178,6 +1181,75 @@ def plot_doublet_score_by_cluster(adata, cluster_key, output_dir,
     return _fig_to_base64(fig)
 
 
+def plot_stress_score_by_cluster(adata, cluster_key, output_dir,
+                                 score_key="stress_score", n_genes=None):
+    """Per-cluster distribution of the heat-shock / dissociation-stress score.
+
+    A cluster sitting well above the rest here is usually a dissociation
+    artifact rather than a cell type — worth checking before it is annotated.
+
+    Plotted next to, not instead of, ``median_pct_mt``: the two capture
+    different failure modes (handling stress vs. mitochondrial burden) and a
+    cluster can be high in one and normal in the other. The zero line is drawn
+    because the score is a mean of z-scores, so 0 is "average cell", not "no
+    stress" — a reader who forgets that will over-read small positive values.
+
+    Returns None when the score column is absent (``inspection.stress``
+    disabled, or no heat-shock genes in the object), so the report omits it.
+    """
+    if score_key not in adata.obs.columns:
+        print(f"  [INFO] No '{score_key}' in obs — skipping stress score plot.")
+        return None
+
+    scores = pd.to_numeric(adata.obs[score_key], errors="coerce")
+    scored = scores.notna().to_numpy()
+    if not scored.any():
+        print(f"  [INFO] '{score_key}' has no finite values — skipping "
+              "stress score plot.")
+        return None
+
+    frame = pd.DataFrame({
+        "cluster": adata.obs[cluster_key].astype(str).to_numpy(),
+        "score": scores.to_numpy(),
+    })[scored]
+
+    clusters = sorted(frame["cluster"].unique(),
+                      key=lambda x: int(x) if x.isdigit() else x)
+    grouped = [frame.loc[frame["cluster"] == c, "score"].to_numpy()
+               for c in clusters]
+    counts = [len(g) for g in grouped]
+
+    fig, ax = plt.subplots(figsize=(max(6, len(clusters) * 0.85 + 1), 4.5))
+    parts = ax.violinplot(grouped, positions=range(len(clusters)),
+                          showextrema=False, widths=0.85)
+    for body in parts["bodies"]:
+        body.set_facecolor("#AA7744")
+        body.set_alpha(0.55)
+    ax.boxplot(grouped, positions=range(len(clusters)), widths=0.18,
+               showfliers=False,
+               medianprops=dict(color="#B33018", linewidth=1.6),
+               boxprops=dict(color="#333333"),
+               whiskerprops=dict(color="#333333"),
+               capprops=dict(color="#333333"))
+    ax.axhline(0.0, color="#888888", linewidth=0.8, linestyle="--", zorder=0)
+
+    ax.set_xticks(range(len(clusters)))
+    ax.set_xticklabels([f"{c}\nn={n}" for c, n in zip(clusters, counts)],
+                       fontsize=8)
+    ax.set_xlabel(cluster_key)
+    ax.set_ylabel(f"{score_key} (mean z across panel)")
+
+    title = "Heat-shock / stress score by cluster"
+    if n_genes:
+        title += f" — {n_genes} panel genes"
+    title += "\nread alongside median_pct_mt; 0 = average cell, not unstressed"
+    ax.set_title(title, fontsize=10)
+    fig.tight_layout()
+    fig.savefig(os.path.join(output_dir, "stress_score_by_cluster.png"),
+                dpi=150, bbox_inches="tight")
+    return _fig_to_base64(fig)
+
+
 def plot_annotation_umaps(adata, prediction_key, confidence_key, output_dir,
                           umap_key="X_umap"):
     """UMAP panels for annotation predictions and confidence."""
@@ -1874,6 +1946,33 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
     else:
         marker_dict = inspection_cfg.get("marker_sets") or {}
 
+    # 1b. Stress (heat-shock) module score.
+    # Must run BEFORE cluster_qc_summary so median_stress reaches
+    # cluster_qc_summary.csv — contamination scoring runs after it, which is
+    # why no contamination column appears there.
+    stress_cfg = inspection_cfg.get("stress") or {}
+    stress_score_key = stress_cfg.get("score_key", "stress_score")
+    stress_n_genes = None
+    if stress_cfg.get("enabled", True):
+        from .stress import score_stress
+
+        result = score_stress(
+            adata,
+            prefixes=stress_cfg.get("gene_prefixes"),
+            genes=stress_cfg.get("genes"),
+            layer=stress_cfg.get("layer"),
+            z_thresh=stress_cfg.get("z_thresh", 2.0),
+        )
+        if result["used"]:
+            adata.obs[stress_score_key] = result["score"]
+            stress_n_genes = len(result["used"])
+            print(f"  Stress score: {len(result['used'])} heat-shock genes "
+                  f"({', '.join(result['used'][:6])}"
+                  f"{', …' if len(result['used']) > 6 else ''})")
+        else:
+            # Not an error: a heavily subset gene space legitimately has none.
+            print("  Stress score: no heat-shock genes found — panel skipped.")
+
     # 2. Cluster QC summary
     print("  Computing cluster QC summary...")
     from .composition import resolve_composition_keys
@@ -2058,6 +2157,11 @@ def run_inspection_report(adata, config, input_path, output_dir, cluster_key,
         score_key=doublet_cfg.get("score_key", "doublet_score"),
         platform_key=doublet_cfg.get("platform_key") or batch_key,
         call_key=doublet_cfg.get("call_key", "predicted_doublet"))
+
+    # Self-gates on the obs column written in step 1b.
+    images["Stress Score by Cluster"] = plot_stress_score_by_cluster(
+        adata, cluster_key, output_dir,
+        score_key=stress_score_key, n_genes=stress_n_genes)
 
     annotation_low_conf = pd.DataFrame()
     prediction_key = annotation_cfg.get("prediction_key")

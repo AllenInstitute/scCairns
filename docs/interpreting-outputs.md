@@ -83,6 +83,34 @@ right axis.
 Read it alongside `neighbor_purity`: a doublet-rich cluster sitting between two real
 populations usually shows low purity with the two parents as its `dominant_neighbor`.
 
+## Stress score by cluster (`stress_score_by_cluster.png`)
+
+The heat-shock / dissociation signature, scored per cell as the mean z-score across the
+HSP genes present in the object and summarized per cluster as `median_stress` in
+`cluster_qc_summary.csv`. A cluster sitting well above the rest is usually an artifact
+of how long the tissue sat in protease rather than a cell type — worth resolving before
+it gets annotated, because a "novel Hspa1a-high population" is a recurring way to
+publish a handling artifact.
+
+**The zero line is not "unstressed."** The score is a mean of z-scores, so 0 is the
+average cell in *this* object. If the whole dissociation went badly, every cluster sits
+near 0 and the panel shows nothing — it is a relative measure, and a uniformly stressed
+prep is invisible to it. The absolute check is still the HSP genes' expression in the
+marker dotplot.
+
+**Read it beside `median_pct_mt`, not instead of it.** The two capture different failure
+modes — handling stress versus mitochondrial burden — and a cluster can be high in one
+and normal in the other. That is also why the panel is heat-shock-only: `pct_counts_mt`
+already exists, is already auto-flagged by `mt_threshold`, and a second mitochondrial
+number on a different scale would only disagree with the first.
+
+Unlike the contamination panels, a high stress score does **not** put cells into
+`contamination_flagged_cells.csv`. Stress is normally a whole-cluster verdict
+(`remove_clusters`), whereas contamination is a per-cell, wrong-lineage call — so the
+two stay separate and `flag_any_contam` is unaffected. Immediate-early genes (Fos, Jun,
+Egr1) are excluded by default because in neurons they are genuine activity markers; add
+them through `inspection.stress.gene_prefixes` where that ambiguity doesn't apply.
+
 ## Auto-flags (`auto_flags.yaml`)
 
 The inspection writes a *suggested* set of removals — any cluster tripping one of the
