@@ -6,6 +6,8 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-10-05
+
 ### Added
 - `sccairns.stress`: heat-shock / dissociation-stress module scoring, surfaced in the
   inspection report as `stress_score_by_cluster.png` and as a `median_stress` column in
@@ -336,6 +338,7 @@ Changes before the project was packaged and renamed (dates approximate, from git
   validation, resolved-config persistence, and the
   `integrate → inspect → decide → filter → re-integrate` loop with scVI/scANVI.
 
-[Unreleased]: https://github.com/AllenInstitute/scCairns/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/AllenInstitute/scCairns/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/AllenInstitute/scCairns/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/AllenInstitute/scCairns/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AllenInstitute/scCairns/releases/tag/v0.1.0
