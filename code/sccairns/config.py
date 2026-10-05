@@ -197,6 +197,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "layer": None,   # None → adata.X (log-normalized)
             "panels": None,
         },
+        # Heat-shock / dissociation-stress module score, per cell and per
+        # cluster. Scored with the same z-score path as contamination but kept
+        # separate: a stressed cell is a "drop this cluster" call, not a
+        # wrong-lineage call, so it must not feed flag_any_contam.
+        # Heat-shock only by design — mitochondrial burden is already covered
+        # by pct_counts_mt / median_pct_mt / auto_flag.mt_threshold.
+        "stress": {
+            "enabled": True,
+            "gene_prefixes": None,  # None → stress.DEFAULT_STRESS_PREFIXES
+            "genes": None,          # explicit panel; overrides gene_prefixes
+            "z_thresh": 2.0,
+            "layer": None,          # None → adata.X (log-normalized)
+            "score_key": "stress_score",
+        },
     },
     "benchmark": {
         "enabled": True,

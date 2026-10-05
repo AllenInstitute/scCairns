@@ -131,6 +131,24 @@ are written to `cluster_qc_summary.csv` either way. The `contamination` block
 flagging. Marker sets and panels are covered in
 [adapting to your data](adapting-to-your-data.md).
 
+The **`stress`** block (`enabled` true, `gene_prefixes` null→built-in, `genes` null,
+`z_thresh` 2.0, `layer` null, `score_key` `stress_score`) scores the heat-shock /
+dissociation signature per cell, writing `median_stress` to `cluster_qc_summary.csv`
+and `stress_score_by_cluster.png` to the report. The panel is matched by **prefix**
+against `var_names` at run time (default `Hsp`, `HSP`, `Dnaj`, `DNAJ`), so one default
+covers mouse and human symbol casing; set `genes` to pin an explicit list instead.
+
+Two deliberate omissions. **Mitochondrial genes are not in it** — `pct_counts_mt` /
+`median_pct_mt` / `auto_flag.mt_threshold` already cover that, and a second
+mitochondrial number on a different scale would just disagree with the first; read the
+stress score *beside* `median_pct_mt`, not instead of it. **Immediate-early genes are
+not in it** either: in neurons Fos/Jun/Egr1 are real activity markers, so add them via
+`gene_prefixes` only where the tissue makes the interpretation unambiguous.
+
+Unlike contamination, a high stress score does **not** feed
+`contamination_flagged_cells.csv` — it is a "drop this cluster" signal, not a
+wrong-lineage call, so it stays out of `flag_any_contam`.
+
 ## `benchmark`
 
 `enabled: true` runs scib-metrics across the available embeddings. Set
