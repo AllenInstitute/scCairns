@@ -155,4 +155,4 @@ dmypy.json
 figures/dotplot__contam.png
 TRACEABILITY_EVALUATION_v2.md
 code/manual_inspection.ipynb
-.runScript
+*.runScript
