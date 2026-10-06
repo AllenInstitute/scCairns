@@ -12,4 +12,4 @@ Stage modules (also exposed as ``cairns`` subcommands):
   - :mod:`sccairns.config`        — config load/merge/validate + provenance helpers
 """
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"

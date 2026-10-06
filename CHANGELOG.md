@@ -6,7 +6,7 @@ All notable changes to **scCairns** are documented here. The format is based on
 
 ## [Unreleased]
 
-## [0.3.1] — 2026-10-06
+## [0.3.2] — 2026-10-06
 
 ### Changed
 - README: added `pip install scCairns` to Quick start; converted all relative doc links
@@ -346,8 +346,8 @@ Changes before the project was packaged and renamed (dates approximate, from git
   validation, resolved-config persistence, and the
   `integrate → inspect → decide → filter → re-integrate` loop with scVI/scANVI.
 
-[Unreleased]: https://github.com/AllenInstitute/scCairns/compare/v0.3.1...HEAD
-[0.3.1]: https://github.com/AllenInstitute/scCairns/compare/v0.3.0...v0.3.1
+[Unreleased]: https://github.com/AllenInstitute/scCairns/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/AllenInstitute/scCairns/compare/v0.3.0...v0.3.2
 [0.3.0]: https://github.com/AllenInstitute/scCairns/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/AllenInstitute/scCairns/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/AllenInstitute/scCairns/releases/tag/v0.1.0
