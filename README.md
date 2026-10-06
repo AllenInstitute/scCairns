@@ -24,21 +24,21 @@ across rounds:   round 1 → round 2 → round 3 → …   (seed · commit · in
 **Who it's for:** anyone doing quality-controlled single-cell integration who wants a
 reproducible, reviewable loop rather than an ad-hoc notebook. The defaults are tuned
 for mouse sympathetic-nervous-system data, but the engine is dataset-agnostic — see
-[Adapting to your data](docs/adapting-to-your-data.md).
+[Adapting to your data](https://github.com/AllenInstitute/scCairns/blob/main/docs/adapting-to-your-data.md).
 
 ## New here? Start with the docs
 
 | Guide | For |
 |---|---|
-| **[Getting started](docs/getting-started.md)** | Install, verify, and the input-data contract |
-| **[Tutorial](docs/tutorial.md)** | A full runnable loop on synthetic data (no downloads) |
-| **[Configuration reference](docs/configuration.md)** | Every config field, and *when to change it* |
-| **[Integration methods](docs/integration-methods.md)** | Tune the scVI architecture, or swap in another method (Scanorama, etc.) |
-| **[Decisions (`decisions.yaml`)](docs/decisions.md)** | The filtering syntax |
-| **[Interpreting outputs](docs/interpreting-outputs.md)** | Is my integration good? When do I stop? |
-| **[Adapting to your data](docs/adapting-to-your-data.md)** | Non-mouse / non-SNS datasets (and: should you fork?) |
-| **[Troubleshooting](docs/troubleshooting.md)** | Common errors and fixes |
-| **[Code Ocean](docs/codeocean.md)** | Running the capsule |
+| **[Getting started](https://github.com/AllenInstitute/scCairns/blob/main/docs/getting-started.md)** | Install, verify, and the input-data contract |
+| **[Tutorial](https://github.com/AllenInstitute/scCairns/blob/main/docs/tutorial.md)** | A full runnable loop on synthetic data (no downloads) |
+| **[Configuration reference](https://github.com/AllenInstitute/scCairns/blob/main/docs/configuration.md)** | Every config field, and *when to change it* |
+| **[Integration methods](https://github.com/AllenInstitute/scCairns/blob/main/docs/integration-methods.md)** | Tune the scVI architecture, or swap in another method (Scanorama, etc.) |
+| **[Decisions (`decisions.yaml`)](https://github.com/AllenInstitute/scCairns/blob/main/docs/decisions.md)** | The filtering syntax |
+| **[Interpreting outputs](https://github.com/AllenInstitute/scCairns/blob/main/docs/interpreting-outputs.md)** | Is my integration good? When do I stop? |
+| **[Adapting to your data](https://github.com/AllenInstitute/scCairns/blob/main/docs/adapting-to-your-data.md)** | Non-mouse / non-SNS datasets (and: should you fork?) |
+| **[Troubleshooting](https://github.com/AllenInstitute/scCairns/blob/main/docs/troubleshooting.md)** | Common errors and fixes |
+| **[Code Ocean](https://github.com/AllenInstitute/scCairns/blob/main/docs/codeocean.md)** | Running the capsule |
 
 ## Workflow
 
@@ -106,7 +106,13 @@ the report and authors the `decisions.yaml` — that's the one non-automated gat
 
 ## Quick start
 
-Install (details in [getting-started.md](docs/getting-started.md)):
+Install (details in [getting-started.md](https://github.com/AllenInstitute/scCairns/blob/main/docs/getting-started.md)):
+
+```bash
+pip install scCairns
+```
+
+For a reproducible environment with pinned dependencies (recommended for analysis):
 
 ```bash
 mamba create -n sccairns -c conda-forge python=3.10 pip scikit-misc -y
@@ -145,7 +151,7 @@ Step 5 writes to `rounds/summary/` and is worth running even after a single roun
 and an input whose content no longer matches what the parent round produced. Add
 `--strict` to exit non-zero on any finding, which is what you want inside a pipeline.
 
-Prefer a guided, runnable version? Follow the **[tutorial](docs/tutorial.md)** — it
+Prefer a guided, runnable version? Follow the **[tutorial](https://github.com/AllenInstitute/scCairns/blob/main/docs/tutorial.md)** — it
 generates a synthetic dataset and walks the whole loop with expected numbers.
 
 ## Outputs and provenance
@@ -173,8 +179,8 @@ a SHA-256 fingerprint of the input, and a `parent_round` pointer linking rounds 
 an explicit lineage. Installed from a pinned release rather than a checkout, the version
 is the identifier, so pin an exact tag in whatever builds your environment. `command_args.json` keeps an append-only history of every stage
 invocation. Full field-by-field detail lives in the
-[configuration reference](docs/configuration.md) and
-[interpreting outputs](docs/interpreting-outputs.md).
+[configuration reference](https://github.com/AllenInstitute/scCairns/blob/main/docs/configuration.md) and
+[interpreting outputs](https://github.com/AllenInstitute/scCairns/blob/main/docs/interpreting-outputs.md).
 
 If filtering happened in an external interactive tool, record the same provenance
 without re-running Cairns filtering:
@@ -193,7 +199,7 @@ Either side can be a list of cell IDs instead of an `.h5ad` (`--input-cell-ids` 
 `--output-cell-ids`), so a tool that can't write AnnData — Seurat, Loupe — can hand back
 just the barcodes it kept. `--embedding-key` is optional, for a filter applied at ingest
 before any embedding exists. See
-[filtering outside scCairns](docs/decisions.md#filtering-outside-sccairns-seurat-loupe-a-notebook).
+[filtering outside scCairns](https://github.com/AllenInstitute/scCairns/blob/main/docs/decisions.md#filtering-outside-sccairns-seurat-loupe-a-notebook).
 
 ## Summarizing a completed set of rounds
 
@@ -231,7 +237,7 @@ non-zero when a check fails, so the summary can gate CI. In discovery mode
 ## Environment
 
 Local development uses a Python 3.10 conda/mamba environment and `requirements.txt`
-(CPU-friendly `scvi-tools==1.3.3`). The [Docker image](docs/codeocean.md) pins the
+(CPU-friendly `scvi-tools==1.3.3`). The [Docker image](https://github.com/AllenInstitute/scCairns/blob/main/docs/codeocean.md) pins the
 same libraries with the CUDA extra for GPU/container parity. Run the checks with:
 
 ```bash

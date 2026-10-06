@@ -34,6 +34,12 @@ dependencies = [
     "torch",
 ]
 
+[project.urls]
+Homepage = "https://github.com/AllenInstitute/scCairns"
+Source = "https://github.com/AllenInstitute/scCairns"
+"Getting started" = "https://github.com/AllenInstitute/scCairns/blob/main/docs/getting-started.md"
+Changelog = "https://github.com/AllenInstitute/scCairns/blob/main/CHANGELOG.md"
+
 [project.optional-dependencies]
 # Harmony is an opt-in integration path (integration.harmony.enabled). Kept out
 # of the core deps so a base install doesn't pull it. Capped <1 because the code
