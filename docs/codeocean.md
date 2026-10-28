@@ -39,7 +39,7 @@ its own `pipeline.yml`, `run`, and `.codeocean/datasets.json`, and scCairns come
 the image. Put the install in the capsule's **`postInstall`**:
 
 ```bash
-pip install --no-cache-dir "git+https://github.com/AllenInstitute/scCairns.git@v0.2.0"
+pip install --no-cache-dir "scCairns==0.3.2"
 ```
 
 Then `run` needs no preamble at all — pip puts a real `cairns` on PATH.
@@ -48,11 +48,11 @@ Two things to get right. **The install must happen at image build, never in `run
 reproducible run is offline, so a `pip install` there fails (it works on the Cloud
 Workstation, which is why this is easy to miss). And **put it in `postInstall`, not
 `environment/Dockerfile`** — Code Ocean generates the Dockerfile from the UI package
-list (note its `# hash:sha256:` header) and will overwrite hand edits. Authenticated
-access to the private repo is already wired up: the Dockerfile carries `ARG GIT_ASKPASS`
-and `COPY git-ask-pass /`.
+list (note its `# hash:sha256:` header) and will overwrite hand edits. (Only needed for
+installing from the private git repo instead of PyPI: the Dockerfile carries `ARG GIT_ASKPASS`
+and `COPY git-ask-pass /`.)
 
-Pin an exact tag. `@main` means rebuilding the image silently changes the tool, and
+Pin an exact version. Unpinned (or `@main`) means rebuilding the image silently changes the tool, and
 since an installed distribution has no git metadata, the pinned version is what each
 `round_manifest.json` records as its `code.version`. Confirm what a built image actually
 got with `cairns --version`.
